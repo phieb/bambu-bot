@@ -57,10 +57,17 @@ def test_cancel_keywords():
 
 
 def test_list_keywords():
-    for m in ("!liste", "!Queue", "!status", "!warteschlange"):
+    for m in ("!liste", "!Queue", "!warteschlange"):
         assert _grp(m)["is_list"], m
     assert not _grp("liste")["is_list"]  # needs the ! prefix
     assert not _grp("3 1")["is_list"]
+
+
+def test_progress_keywords():
+    for m in ("!progress", "!fortschritt", "!status", "!druck"):
+        assert _grp(m)["is_progress"], m
+    assert not _grp("!status")["is_list"]  # status is progress now, not list
+    assert not _grp("progress")["is_progress"]  # needs the ! prefix
 
 
 def test_help_keywords():

@@ -131,8 +131,18 @@ def last_queued_job(group_id):
 
 
 def mark_cancelled(job_id):
+    set_stage(job_id, "cancelled")
+
+
+def set_stage(job_id, stage):
     with _conn() as c:
-        c.execute(
-            "UPDATE jobs SET stage='cancelled', updated_at=? WHERE id=?",
-            (time.time(), job_id),
-        )
+        c.execute("UPDATE jobs SET stage=?, updated_at=? WHERE id=?", (stage, time.time(), job_id))
+
+
+def queued_jobs_with_item():
+    """Queued jobs that have a Bambuddy item id — watched for completion."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM jobs WHERE stage='queued' AND queue_item_id IS NOT NULL"
+        ).fetchall()
+        return [dict(r) for r in rows]

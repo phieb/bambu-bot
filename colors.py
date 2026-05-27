@@ -113,13 +113,15 @@ HELP_TEXT = (
     "🤖 Befehle (einfach hier reinschreiben):\n"
     "• MakerWorld-Link → neuer Druckauftrag\n"
     "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
+    "• !progress → aktueller Druck (%, Layer, Restzeit)\n"
     "• !liste → zeigt die Druck-Queue\n"
     "• !abbrechen → offene Farbfrage verwerfen, sonst letzten wartenden "
     "Queue-Job entfernen (laufende Drucke bleiben)\n"
-    "• !help → diese Übersicht"
+    "• !help → diese Übersicht\n"
+    "Wenn dein Druck fertig ist, meld ich mich automatisch."
 )
 
-_HINT = "💡 !liste · !abbrechen · !help"
+_HINT = "💡 !progress · !liste · !abbrechen · !help"
 
 
 def build_question(name, required, ams):

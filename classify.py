@@ -8,7 +8,8 @@ _NUMBERED = re.compile(r"^\s*\d+(?:[\s,]+\d+)*\s*$")
 # Commands are prefixed with "!" so they never collide with color replies
 # ("3 1 2") or chatter. MakerWorld links and numbered replies stay prefix-free.
 _CANCEL = re.compile(r"^\s*!\s*(abbrechen|abbruch|abbrich|cancel|verwerfen|stopp?)\s*$", re.I)
-_LIST = re.compile(r"^\s*!\s*(liste?|queue|status|warteschlange)\s*$", re.I)
+_LIST = re.compile(r"^\s*!\s*(liste?|queue|warteschlange)\s*$", re.I)
+_PROGRESS = re.compile(r"^\s*!\s*(progress|fortschritt|status|druck)\s*$", re.I)
 _HELP = re.compile(r"^\s*!\s*(hilfe|help|befehle|commands|\?)\s*$", re.I)
 
 
@@ -62,6 +63,7 @@ def classify(envelope):
         "is_numbered": bool(_NUMBERED.match(message)),
         "is_cancel": bool(_CANCEL.match(message)),
         "is_list": bool(_LIST.match(message)),
+        "is_progress": bool(_PROGRESS.match(message)),
         "is_help": bool(_HELP.match(message)),
     }
 

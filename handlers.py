@@ -36,6 +36,8 @@ def _route(parsed):
         return "group_cancel"
     if parsed["is_list"]:
         return "group_list"
+    if parsed["is_progress"]:
+        return "group_progress"
     if parsed["is_numbered"]:
         return "group_config"
     return "ignore"
@@ -60,6 +62,8 @@ async def handle(envelope):
             await _cancel(parsed["group_send_id"])
         elif route == "group_list":
             await _list(parsed["group_send_id"])
+        elif route == "group_progress":
+            await _progress(parsed["group_send_id"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
     except Exception:
@@ -133,7 +137,7 @@ async def _config(group_id, message):
     await signal_client.send_to_group(
         group_id,
         f'✅ "{job["model_name"]}" ist in der Queue! Farben: {nums}{note}\n'
-        f'(!abbrechen zum Entfernen · !liste für die Queue · !help für alle Befehle)',
+        f'Ich sag dir Bescheid, wenn er fertig ist. (!progress für den Stand · !liste · !abbrechen · !help)',
     )
 
 
@@ -245,3 +249,61 @@ async def _list(group_id):
         st = it.get("status") or "?"
         lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st})'.replace("  ", " "))
     await signal_client.send_to_group(group_id, "📋 Queue:\n" + "\n".join(lines))
+
+
+_ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"}
+
+
+async def _progress(group_id):
+    """Current print on the printer (any source), or idle."""
+    s = await bambuddy.printer_status(config.PRINTER_ID) or {}
+    state = s.get("state") or "?"
+    name = s.get("current_print") or s.get("subtask_name") or ""
+    prog = s.get("progress")
+    ln, tl = s.get("layer_num"), s.get("total_layers")
+    rem = s.get("remaining_time")
+    active = state.upper() in _ACTIVE_STATES or (isinstance(prog, (int, float)) and 0 < prog < 100)
+    if not (name and active):
+        await signal_client.send_to_group(group_id, f"🖨️ Drucker ist {state.lower()} — gerade kein Druck.")
+        return
+    parts = [f'🖨️ „{name}" — {state}']
+    if isinstance(prog, (int, float)):
+        parts.append(f"{round(prog)}%")
+    if ln and tl:
+        parts.append(f"Layer {ln}/{tl}")
+    if rem:
+        parts.append(f"noch ca. {rem} min")
+    await signal_client.send_to_group(group_id, " · ".join(parts))
+
+
+async def poll_completions(interval=60):
+    """Watch bot-queued jobs and message the group when each finishes/fails.
+    Prints started via other channels aren't tracked here, so they're skipped."""
+    while True:
+        try:
+            await _check_completions()
+        except Exception:
+            log.exception("completion poll failed")
+        await asyncio.sleep(interval)
+
+
+async def _check_completions():
+    for job in store.queued_jobs_with_item():
+        item = await bambuddy.get_queue_item(job["queue_item_id"])
+        status = (item or {}).get("status")
+        if status == "completed":
+            await signal_client.send_to_group(
+                job["group_id"], f'✅ „{job["model_name"]}" ist fertig gedruckt! 🎉'
+            )
+            store.set_stage(job["id"], "done")
+        elif status == "failed":
+            await signal_client.send_to_group(
+                job["group_id"],
+                f'❌ „{job["model_name"]}" ist fehlgeschlagen' +
+                (f": {item.get('error_message')}" if item.get("error_message") else ".") +
+                "\n(!liste zeigt die Queue)",
+            )
+            store.set_stage(job["id"], "failed")
+        elif status == "cancelled":
+            store.set_stage(job["id"], "cancelled")
+        # pending / printing / missing → keep watching

@@ -1,5 +1,6 @@
 """bambu-bot HTTP service. An upstream dispatcher asks /claims, then forwards to
 /receive."""
+import asyncio
 import logging
 
 from fastapi import BackgroundTasks, FastAPI, Request
@@ -16,6 +17,12 @@ app = FastAPI(title="bambu-bot")
 @app.on_event("startup")
 def _startup():
     store.init_db()
+
+
+@app.on_event("startup")
+async def _start_poller():
+    # Background watcher: notifies the queuer's group when their print finishes.
+    asyncio.create_task(handlers.poll_completions())
 
 
 @app.get("/health")
