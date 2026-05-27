@@ -37,6 +37,20 @@ async def printer_status(printer_id):
     return await _get(f"/api/v1/printers/{printer_id}/status")
 
 
+async def camera_snapshot(printer_id):
+    """Single live JPEG frame from the printer camera as raw bytes, or None.
+    Works without starting a stream; never raises (a missing cam shouldn't
+    break a progress reply)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(config.BAMBUDDY_URL + f"/api/v1/printers/{printer_id}/camera/snapshot")
+            r.raise_for_status()
+            ct = r.headers.get("content-type", "")
+            return r.content if "image" in ct and r.content else None
+    except Exception:
+        return None
+
+
 async def queue(library_file_id, ams_mapping):
     return await _post(
         "/api/v1/queue/",

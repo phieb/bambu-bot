@@ -113,7 +113,7 @@ HELP_TEXT = (
     "🤖 Befehle (einfach hier reinschreiben):\n"
     "• MakerWorld-Link → neuer Druckauftrag\n"
     "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
-    "• !progress → aktueller Druck (%, Layer, Restzeit)\n"
+    "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
     "• !liste → zeigt die Druck-Queue\n"
     "• !abbrechen → offene Farbfrage verwerfen, sonst letzten wartenden "
     "Queue-Job entfernen (laufende Drucke bleiben)\n"

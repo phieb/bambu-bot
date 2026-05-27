@@ -255,8 +255,15 @@ _ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"
 
 
 async def _progress(group_id):
-    """Current print on the printer (any source), or idle."""
-    s = await bambuddy.printer_status(config.PRINTER_ID) or {}
+    """Current print on the printer (any source), or idle — with a live cam shot."""
+    # Status + camera frame overlap; the snapshot is best-effort (None if no cam).
+    s, raw = await asyncio.gather(
+        bambuddy.printer_status(config.PRINTER_ID),
+        bambuddy.camera_snapshot(config.PRINTER_ID),
+    )
+    s = s or {}
+    cam = await asyncio.to_thread(swatch.shrink_image, raw) if raw else None
+    attachments = [cam] if cam else None
     state = s.get("state") or "?"
     name = s.get("current_print") or s.get("subtask_name") or ""
     prog = s.get("progress")
@@ -264,7 +271,9 @@ async def _progress(group_id):
     rem = s.get("remaining_time")
     active = state.upper() in _ACTIVE_STATES or (isinstance(prog, (int, float)) and 0 < prog < 100)
     if not (name and active):
-        await signal_client.send_to_group(group_id, f"🖨️ Drucker ist {state.lower()} — gerade kein Druck.")
+        await signal_client.send_to_group(
+            group_id, f"🖨️ Drucker ist {state.lower()} — gerade kein Druck.", attachments=attachments
+        )
         return
     parts = [f'🖨️ „{name}" — {state}']
     if isinstance(prog, (int, float)):
@@ -273,7 +282,7 @@ async def _progress(group_id):
         parts.append(f"Layer {ln}/{tl}")
     if rem:
         parts.append(f"noch ca. {rem} min")
-    await signal_client.send_to_group(group_id, " · ".join(parts))
+    await signal_client.send_to_group(group_id, " · ".join(parts), attachments=attachments)
 
 
 async def poll_completions(interval=60):
