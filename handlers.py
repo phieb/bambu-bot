@@ -9,6 +9,7 @@ import colors
 import config
 import signal_client
 import store
+import swatch
 
 log = logging.getLogger("bambu-bot")
 
@@ -26,6 +27,10 @@ def _route(parsed):
         return "ignore"
     if parsed["has_link"]:
         return "group_link"
+    if parsed["is_cancel"]:
+        return "group_cancel"
+    if parsed["is_list"]:
+        return "group_list"
     if parsed["is_numbered"]:
         return "group_config"
     return "ignore"
@@ -46,6 +51,10 @@ async def handle(envelope):
             await _intake(parsed["group_send_id"], parsed["sender"], parsed["url"])
         elif route == "group_config":
             await _config(parsed["group_send_id"], parsed["message"])
+        elif route == "group_cancel":
+            await _cancel(parsed["group_send_id"])
+        elif route == "group_list":
+            await _list(parsed["group_send_id"])
     except Exception:
         log.exception("handle failed (route=%s)", route)
 
@@ -76,7 +85,14 @@ async def _intake(group_id, sender, url):
     ams = colors.ams_snapshot(status)
     name = colors.model_name(resolved)
     store.create_job(group_id, sender, resolved["model_id"], library_file_id, name, required, ams)
-    await signal_client.send_to_group(group_id, colors.build_question(name, required, ams))
+    thumb = await signal_client.fetch_attachment(colors.cover_url(resolved))
+    chart = swatch.build(name, required, ams)
+    attachments = [a for a in (thumb, chart) if a]
+    await signal_client.send_to_group(
+        group_id,
+        colors.build_question(name, required, ams),
+        attachments=attachments or None,
+    )
 
 
 async def _config(group_id, message):
@@ -94,8 +110,66 @@ async def _config(group_id, message):
         return
     if not store.claim_job_for_queue(group_id):
         return  # a duplicate/concurrent reply already queued it
-    await bambuddy.queue(job["library_file_id"], mapping)
+    resp = await bambuddy.queue(job["library_file_id"], mapping)
+    if isinstance(resp, dict) and resp.get("id"):
+        store.set_queue_item_id(job["id"], resp["id"])
     nums = " ".join(str(m + 1) for m in mapping)
     await signal_client.send_to_group(
-        group_id, f'✅ "{job["model_name"]}" ist in der Queue! Farben: {nums}'
+        group_id,
+        f'✅ "{job["model_name"]}" ist in der Queue! Farben: {nums}\n'
+        f'(„abbrechen" zum Entfernen, „liste" für die Queue)',
     )
+
+
+_STATUS_EMOJI = {
+    "pending": "⏳", "printing": "🖨️", "completed": "✅",
+    "failed": "❌", "skipped": "⏭️", "cancelled": "🚫",
+}
+
+
+async def _cancel(group_id):
+    """Drop an open color dialog, else remove the last still-pending queue item.
+    A print that is already running is never stopped."""
+    dialog = store.active_job(group_id)
+    if dialog:
+        store.discard_dialog(dialog["id"])
+        await signal_client.send_to_group(
+            group_id,
+            f'🗑️ Abgebrochen: „{dialog["model_name"]}" verworfen. '
+            "Schick mir einen neuen MakerWorld-Link, wenn du willst.",
+        )
+        return
+    job = store.last_queued_job(group_id)
+    if not job:
+        await signal_client.send_to_group(group_id, "Da ist gerade nichts zum Abbrechen.")
+        return
+    item = await bambuddy.get_queue_item(job["queue_item_id"])
+    status = (item or {}).get("status")
+    name = job["model_name"]
+    if status == "pending":
+        await bambuddy.delete_queue_item(job["queue_item_id"])
+        store.mark_cancelled(job["id"])
+        await signal_client.send_to_group(group_id, f'🗑️ „{name}" aus der Queue entfernt.')
+    elif status == "printing":
+        await signal_client.send_to_group(
+            group_id, f'🖨️ „{name}" druckt schon — laufende Drucke breche ich nicht ab.'
+        )
+    else:
+        store.mark_cancelled(job["id"])
+        await signal_client.send_to_group(
+            group_id, f'„{name}" ist nicht mehr abbrechbar (Status: {status or "unbekannt"}).'
+        )
+
+
+async def _list(group_id):
+    items = await bambuddy.list_queue()
+    if not items:
+        await signal_client.send_to_group(group_id, "📋 Queue ist leer.")
+        return
+    lines = []
+    for i, it in enumerate(items, 1):
+        nm = (it.get("library_file_name") or it.get("archive_name")
+              or it.get("target_model") or f'#{it.get("id")}')
+        st = it.get("status") or "?"
+        lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st})'.replace("  ", " "))
+    await signal_client.send_to_group(group_id, "📋 Queue:\n" + "\n".join(lines))

@@ -67,3 +67,28 @@ def test_build_question_mentions_colors_and_slots():
     ams = colors.ams_snapshot(STATUS)
     q = colors.build_question("Test Modell", rc, ams)
     assert "Test Modell" in q and "AMS Slots" in q and "1)" in q
+
+
+def test_build_question_uses_names_not_hex():
+    rc = colors.required_colors(RESOLVED)
+    ams = colors.ams_snapshot(STATUS)
+    q = colors.build_question("Test Modell", rc, ams)
+    assert "#" not in q and "Weiß" in q and "Schwarz" in q
+
+
+def test_color_name_basics():
+    assert colors.color_name("FFFFFF") == "Weiß"
+    assert colors.color_name("000000") == "Schwarz"
+    assert colors.color_name("898989") == "Grau"
+    assert colors.color_name("") == ""
+    assert colors.color_name("xyz") == ""
+
+
+def test_swatch_renders_png():
+    import swatch
+    rc = colors.required_colors(RESOLVED)
+    ams = colors.ams_snapshot(STATUS)
+    b64 = swatch.build("Test Modell", rc, ams)
+    assert isinstance(b64, str) and len(b64) > 100
+    import base64
+    assert base64.b64decode(b64)[:8] == b"\x89PNG\r\n\x1a\n"

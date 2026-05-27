@@ -38,6 +38,9 @@ def init_db():
             )"""
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_group_stage ON jobs(group_id, stage)")
+        cols = [r[1] for r in c.execute("PRAGMA table_info(jobs)").fetchall()]
+        if "queue_item_id" not in cols:
+            c.execute("ALTER TABLE jobs ADD COLUMN queue_item_id INTEGER")
 
 
 # ----- groups (registry) -----
@@ -99,3 +102,37 @@ def claim_job_for_queue(group_id):
             (time.time(), group_id),
         )
         return cur.rowcount > 0
+
+
+def set_queue_item_id(job_id, queue_item_id):
+    """Record the Bambuddy queue item id so the job can later be cancelled."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE jobs SET queue_item_id=?, updated_at=? WHERE id=?",
+            (queue_item_id, time.time(), job_id),
+        )
+
+
+def discard_dialog(job_id):
+    """Drop an open (awaiting_colors) dialog the user gave up on."""
+    with _conn() as c:
+        c.execute("DELETE FROM jobs WHERE id=? AND stage='awaiting_colors'", (job_id,))
+
+
+def last_queued_job(group_id):
+    """Most recent queued job for a group that has a Bambuddy queue item id."""
+    with _conn() as c:
+        r = c.execute(
+            "SELECT * FROM jobs WHERE group_id=? AND stage='queued' "
+            "AND queue_item_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (group_id,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def mark_cancelled(job_id):
+    with _conn() as c:
+        c.execute(
+            "UPDATE jobs SET stage='cancelled', updated_at=? WHERE id=?",
+            (time.time(), job_id),
+        )

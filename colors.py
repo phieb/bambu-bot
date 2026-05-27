@@ -3,6 +3,44 @@ printer status, the numbered question text, and parsing the user's reply into
 an ``ams_mapping`` array (index = model filament, value = 0-based AMS tray id)."""
 import re
 
+# Curated German palette for naming a hex value. Covers tones emoji squares
+# can't (Grau/Beige/Rosa/…), so the text stays readable even without the swatch.
+_PALETTE = [
+    ("Schwarz", "000000"), ("Dunkelgrau", "404040"), ("Grau", "808080"),
+    ("Hellgrau", "C0C0C0"), ("Weiß", "FFFFFF"),
+    ("Rot", "E0301E"), ("Orange", "F08000"), ("Gelb", "F0D000"),
+    ("Grün", "20A020"), ("Dunkelgrün", "0A5A0A"), ("Türkis", "10B0A0"),
+    ("Hellblau", "60B0E0"), ("Blau", "1050C0"), ("Dunkelblau", "0A1A6A"),
+    ("Lila", "8030C0"), ("Rosa", "F060A0"), ("Pink", "E0108A"),
+    ("Braun", "7A4A20"), ("Beige", "D8C8A8"), ("Gold", "C0A030"),
+    ("Silber", "C8C8D0"),
+]
+
+
+def _rgb(hex6):
+    h = (hex6 or "").lstrip("#")[:6]
+    if len(h) != 6:
+        return None
+    try:
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return None
+
+
+def color_name(hex6):
+    """Nearest German color name for a hex value, or "" if unparseable."""
+    rgb = _rgb(hex6)
+    if rgb is None:
+        return ""
+    r, g, b = rgb
+    best, bestd = "", None
+    for name, ph in _PALETTE:
+        pr, pg, pb = _rgb(ph)
+        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if bestd is None or d < bestd:
+            best, bestd = name, d
+    return best
+
 
 def _choose_index(resolved):
     top = resolved.get("instances") or []
@@ -47,6 +85,12 @@ def model_name(resolved):
     return design.get("title") or design.get("name") or "Modell"
 
 
+def cover_url(resolved):
+    """Thumbnail URL of the model, if the resolve response carries one."""
+    design = resolved.get("design") or {}
+    return design.get("coverUrl") or design.get("cover_url") or ""
+
+
 def ams_snapshot(status):
     """First AMS unit's trays: [{slot, tray_id, type, color, sub}] (slot = tray_id+1)."""
     ams_units = status.get("ams") or []
@@ -65,9 +109,12 @@ def ams_snapshot(status):
 
 
 def build_question(name, required, ams):
-    color_lines = "\n".join(f"Farbe {c['index'] + 1}: {c['type']} #{c['color']}" for c in required)
+    color_lines = "\n".join(
+        f"Farbe {c['index'] + 1}: {c['type']} {color_name(c['color'])}".rstrip() for c in required
+    )
     ams_lines = "\n".join(
-        f"  {a['slot']}) {a['type']} #{a['color']}" + (f" {a['sub']}" if a["sub"] else "")
+        f"  {a['slot']}) {a['type']} {color_name(a['color'])}".rstrip()
+        + (f" {a['sub']}" if a["sub"] else "")
         for a in ams
     )
     maxslot = len(ams) or 1

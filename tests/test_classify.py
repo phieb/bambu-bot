@@ -42,6 +42,25 @@ def test_comma_separated_is_numbered():
     assert p["is_numbered"]
 
 
+def _grp(msg):
+    return classify.classify(
+        {"sourceNumber": "+1", "dataMessage": {"message": msg, "groupInfo": {"groupId": INTERNAL}}}
+    )
+
+
+def test_cancel_keywords():
+    for m in ("abbrechen", "Abbrechen", "  cancel ", "stop", "verwerfen"):
+        assert _grp(m)["is_cancel"], m
+    assert not _grp("3 1")["is_cancel"]
+    assert not _grp("bitte abbrechen jetzt")["is_cancel"]  # only the bare keyword
+
+
+def test_list_keywords():
+    for m in ("liste", "Queue", "status", "warteschlange"):
+        assert _grp(m)["is_list"], m
+    assert not _grp("3 1")["is_list"]
+
+
 INNER = {"sourceNumber": "+1", "dataMessage": {"message": "x"}}
 
 

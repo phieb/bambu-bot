@@ -5,6 +5,8 @@ import re
 _MW_FULL = re.compile(r"https?://(?:[\w.-]+\.)?makerworld\.com/\S+", re.I)
 _MW_BARE = re.compile(r"(?:^|\s)(makerworld\.com/\S+)", re.I)
 _NUMBERED = re.compile(r"^\s*\d+(?:[\s,]+\d+)*\s*$")
+_CANCEL = re.compile(r"^\s*(abbrechen|abbruch|abbrich|cancel|verwerfen|stopp?)\s*$", re.I)
+_LIST = re.compile(r"^\s*(liste?|queue|status|warteschlange)\s*$", re.I)
 
 
 def normalize_group(raw):
@@ -55,6 +57,8 @@ def classify(envelope):
         "url": url,
         "has_link": bool(url),
         "is_numbered": bool(_NUMBERED.match(message)),
+        "is_cancel": bool(_CANCEL.match(message)),
+        "is_list": bool(_LIST.match(message)),
     }
 
 

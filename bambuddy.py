@@ -18,6 +18,13 @@ async def _get(path):
         return r.json()
 
 
+async def _delete(path):
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.delete(config.BAMBUDDY_URL + path)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+
 async def resolve(url):
     return await _post("/api/v1/makerworld/resolve", {"url": url})
 
@@ -41,3 +48,17 @@ async def queue(library_file_id, ams_mapping):
             "printer_id": None,  # auto-dispatch
         },
     )
+
+
+async def list_queue():
+    """All queue items: [{id, status, library_file_name, position, ...}]."""
+    return await _get("/api/v1/queue/")
+
+
+async def get_queue_item(item_id):
+    return await _get(f"/api/v1/queue/{int(item_id)}")
+
+
+async def delete_queue_item(item_id):
+    """Remove a (pending) item from the queue. Does not stop a running print."""
+    return await _delete(f"/api/v1/queue/{int(item_id)}")
