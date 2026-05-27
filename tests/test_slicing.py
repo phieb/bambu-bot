@@ -20,6 +20,8 @@ PRESETS = {
             {"id": "F_MATTE", "source": "cloud", "name": "Bambu PLA Matte @BBL P1S 0.4 nozzle"},
             {"id": "F_MATTE_COPY", "source": "cloud", "name": "Bambu PLA Matte @BBL P1S 0.4 nozzle - Copy"},
             {"id": "F_PETG", "source": "cloud", "name": "Bambu PETG HF @BBL P1S 0.4 nozzle"},
+            {"id": "F_ESUN", "source": "cloud", "name": "eSUN PETG Basic @Bambu Lab P1S 0.4 nozzle"},
+            {"id": "F_SUNLU", "source": "cloud", "name": "SUNLU PLA Meta @Bambu Lab P1S 0.4 nozzle"},
             {"id": "F_PLA_X1", "source": "cloud", "name": "Bambu PLA Basic @BBL X1C 0.4 nozzle"},
         ],
     },
@@ -47,6 +49,17 @@ def test_filament_petg():
 def test_filament_sub_brand_match():
     # sub-brand "PLA Matte" beats the generic basic; shortest name wins the tie
     assert slicing.filament_preset(PRESETS, "P1S", "0.4", "PLA", "PLA Matte") == {"source": "cloud", "id": "F_MATTE"}
+
+
+def test_filament_real_name_beats_generic():
+    # non-Bambu PETG: resolved name "eSUN PETG Basic" must win over generic Bambu PETG HF
+    assert slicing.filament_preset(
+        PRESETS, "P1S", "0.4", "PETG", "", "eSUN PETG Basic"
+    ) == {"source": "cloud", "id": "F_ESUN"}
+    # non-Bambu PLA with no sub-brand: resolved "SUNLU PLA Meta" beats Bambu PLA Basic
+    assert slicing.filament_preset(
+        PRESETS, "P1S", "0.4", "PLA", "", "SUNLU PLA Meta"
+    ) == {"source": "cloud", "id": "F_SUNLU"}
 
 
 def test_filament_none_when_nothing_matches():

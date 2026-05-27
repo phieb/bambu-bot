@@ -104,6 +104,7 @@ def ams_snapshot(status):
             "type": t.get("tray_type") or "",
             "color": (t.get("tray_color") or "")[:6],
             "sub": t.get("tray_sub_brands") or "",
+            "info_idx": t.get("tray_info_idx") or "",  # → real filament via /cloud/filament-id-map
         })
     return out
 

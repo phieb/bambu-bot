@@ -45,9 +45,11 @@ def process_preset(presets, model):
     return _ref(cands[0])
 
 
-def filament_preset(presets, model, nozzle, tray_type, sub_brand):
-    """Best filament preset for an AMS slot (type + optional sub-brand), matched
-    by name against the target printer; generic Bambu preset as fallback."""
+def filament_preset(presets, model, nozzle, tray_type, sub_brand, filament_name=""):
+    """Best filament preset for an AMS slot, matched by name against the target
+    printer. ``filament_name`` (resolved from the AMS tag via filament-id-map,
+    e.g. 'eSUN PETG Basic') is the strongest signal — it pins the *actual* spool,
+    including non-Bambu ones. Falls back to sub-brand, then generic Bambu."""
     noz = f"{nozzle} nozzle"
     cands = [p for p in _all(presets, "filament")
              if model in p["name"] and noz in p["name"] and tray_type and tray_type in p["name"]]
@@ -61,6 +63,8 @@ def filament_preset(presets, model, nozzle, tray_type, sub_brand):
     def score(p):
         n = p["name"]
         s = 0
+        if filament_name and filament_name in n:
+            s += 1000
         if sub_brand and sub_brand in n:
             s += 100
         if generic and generic in n:

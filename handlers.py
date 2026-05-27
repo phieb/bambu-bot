@@ -144,14 +144,20 @@ async def _reslice(library_file_id, required, ams, mapping):
     print is never lost — the note flags it."""
     try:
         presets = await bambuddy.get_presets()
+        try:
+            idmap = await bambuddy.filament_id_map() or {}
+        except Exception:
+            log.warning("filament-id-map fetch failed; falling back to heuristic", exc_info=True)
+            idmap = {}
         printer_p = slicing.printer_preset(presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER)
         process_p = slicing.process_preset(presets, config.PRINTER_MODEL)
         filament_ps = []
         for i in range(len(required)):
             tray = next((a for a in ams if a["tray_id"] == mapping[i]), None) or {}
+            real_name = idmap.get(tray.get("info_idx") or "") or ""
             fp = slicing.filament_preset(
                 presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
-                tray.get("type") or "", tray.get("sub") or "",
+                tray.get("type") or "", tray.get("sub") or "", real_name,
             )
             if fp:
                 filament_ps.append(fp)

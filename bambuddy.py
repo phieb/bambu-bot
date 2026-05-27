@@ -71,6 +71,12 @@ async def get_presets():
     return await _get("/api/v1/slicer/presets")
 
 
+async def filament_id_map():
+    """AMS ``tray_info_idx`` → real filament name (e.g. 'eSUN PETG Basic'), so a
+    non-Bambu spool resolves to the user's actual preset instead of a guess."""
+    return await _get("/api/v1/cloud/filament-id-map")
+
+
 async def slice_file(library_file_id, printer_preset, process_preset, filament_presets):
     """Enqueue a slice job → {job_id}. filament_presets is mandatory (one ref
     per model filament). Each *_preset is a {source, id} PresetRef."""
