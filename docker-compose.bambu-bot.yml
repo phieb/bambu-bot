@@ -1,0 +1,22 @@
+# Run this on the SAME docker network as your dispatcher and your Signal REST API,
+# so the dispatcher can reach bambu-bot by name and bambu-bot can reach SIGNAL_URL.
+# Adjust `networks` to match the network those containers already share.
+services:
+  bambu-bot:
+    image: ghcr.io/phieb/bambu-bot:latest
+    container_name: bambu-bot
+    restart: unless-stopped
+    environment:
+      BAMBUDDY_URL: "http://bambuddy:8010"        # your Bambuddy host:port
+      SIGNAL_URL: "http://signal-api:8080"        # your Signal REST API host:port
+      SIGNAL_BOT_NUMBER: ""                        # required: the bot's Signal number, e.g. +431234567
+      DB_PATH: "/data/bambu.db"
+      BAMBUDDY_PRINTER_ID: "1"
+      BAMBU_GROUP_NAME: "🖨️ Bambu Print Queue"
+    volumes:
+      - bambu_bot_data:/data
+    # networks:
+    #   - <the network your dispatcher and Signal REST API are on>
+
+volumes:
+  bambu_bot_data:
