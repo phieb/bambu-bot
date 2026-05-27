@@ -1,5 +1,4 @@
 """Async client for a Signal REST API (send messages, create groups)."""
-import base64
 import logging
 
 import httpx
@@ -27,21 +26,18 @@ async def send_to_number(number, message):
     return await _send([number], message)
 
 
-async def fetch_attachment(url):
-    """Download an image URL → base64 string for Signal's ``base64_attachments``.
-
-    Returns None on any failure so a missing/broken thumbnail never blocks the
-    color question from going out.
-    """
+async def fetch_bytes(url):
+    """Download a URL → raw bytes (e.g. a model thumbnail), or None on any
+    failure so a missing/broken image never blocks the color question."""
     if not url:
         return None
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
             r = await c.get(url)
             r.raise_for_status()
-            return base64.b64encode(r.content).decode()
+            return r.content
     except Exception:
-        log.warning("thumbnail fetch failed: %s", url, exc_info=True)
+        log.warning("image fetch failed: %s", url, exc_info=True)
         return None
 
 

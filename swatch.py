@@ -5,6 +5,7 @@ rendering fails — the text question still carries color names as a fallback)."
 import base64
 import io
 import logging
+from functools import lru_cache
 
 import colors
 
@@ -26,6 +27,7 @@ _FG = (30, 30, 30)
 _MUTED = (110, 110, 110)
 
 
+@lru_cache(maxsize=8)
 def _font(size, bold=False):
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
@@ -50,6 +52,23 @@ def _swatch_rgb(hex6):
         return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     except ValueError:
         return (200, 200, 200)
+
+
+def shrink_image(data, max_px=512, quality=82):
+    """Downscale an image (e.g. a MakerWorld cover) to fit ``max_px`` and
+    re-encode as JPEG → base64, so attachments stay small and upload fast.
+    Returns None if Pillow is missing or the bytes aren't a valid image."""
+    if Image is None or not data:
+        return None
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img.thumbnail((max_px, max_px))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        log.warning("thumbnail shrink failed", exc_info=True)
+        return None
 
 
 def build(name, required, ams):

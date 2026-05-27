@@ -1,5 +1,6 @@
 """Routing + business logic. `claims` is a side-effect-free predicate the
 dispatcher asks before forwarding; `handle` does the real work."""
+import asyncio
 import json
 import logging
 
@@ -89,8 +90,13 @@ async def _intake(group_id, sender, url):
     ams = colors.ams_snapshot(status)
     name = colors.model_name(resolved)
     store.create_job(group_id, sender, resolved["model_id"], library_file_id, name, required, ams)
-    thumb = await signal_client.fetch_attachment(colors.cover_url(resolved))
-    chart = swatch.build(name, required, ams)
+    # Download the cover and render the swatch concurrently; the network fetch
+    # dominates, so overlapping it with the (CPU) render hides the render cost.
+    raw, chart = await asyncio.gather(
+        signal_client.fetch_bytes(colors.cover_url(resolved)),
+        asyncio.to_thread(swatch.build, name, required, ams),
+    )
+    thumb = await asyncio.to_thread(swatch.shrink_image, raw) if raw else None
     attachments = [a for a in (thumb, chart) if a]
     await signal_client.send_to_group(
         group_id,

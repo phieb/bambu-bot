@@ -92,3 +92,27 @@ def test_swatch_renders_png():
     assert isinstance(b64, str) and len(b64) > 100
     import base64
     assert base64.b64decode(b64)[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_shrink_image_downscales_to_jpeg():
+    import base64
+    import io
+
+    import swatch
+    from PIL import Image
+
+    big = Image.new("RGB", (2000, 1500), (120, 60, 200))
+    buf = io.BytesIO()
+    big.save(buf, format="PNG")
+    out = swatch.shrink_image(buf.getvalue(), max_px=512)
+    assert isinstance(out, str)
+    data = base64.b64decode(out)
+    assert data[:3] == b"\xff\xd8\xff"  # JPEG magic
+    w, h = Image.open(io.BytesIO(data)).size
+    assert max(w, h) == 512 and len(data) < len(buf.getvalue())
+
+
+def test_shrink_image_handles_garbage():
+    import swatch
+    assert swatch.shrink_image(b"not an image") is None
+    assert swatch.shrink_image(None) is None
