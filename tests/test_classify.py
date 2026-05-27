@@ -49,16 +49,25 @@ def _grp(msg):
 
 
 def test_cancel_keywords():
-    for m in ("abbrechen", "Abbrechen", "  cancel ", "stop", "verwerfen"):
+    for m in ("!abbrechen", "!Abbrechen", " !cancel ", "!stop", "!verwerfen"):
         assert _grp(m)["is_cancel"], m
     assert not _grp("3 1")["is_cancel"]
-    assert not _grp("bitte abbrechen jetzt")["is_cancel"]  # only the bare keyword
+    assert not _grp("abbrechen")["is_cancel"]  # needs the ! prefix
+    assert not _grp("bitte !abbrechen jetzt")["is_cancel"]  # whole message only
 
 
 def test_list_keywords():
-    for m in ("liste", "Queue", "status", "warteschlange"):
+    for m in ("!liste", "!Queue", "!status", "!warteschlange"):
         assert _grp(m)["is_list"], m
+    assert not _grp("liste")["is_list"]  # needs the ! prefix
     assert not _grp("3 1")["is_list"]
+
+
+def test_help_keywords():
+    for m in ("!help", "!hilfe", "!?", "!befehle", " !commands "):
+        assert _grp(m)["is_help"], m
+    assert not _grp("help")["is_help"]  # needs the ! prefix
+    assert not _grp("3 1")["is_help"]
 
 
 INNER = {"sourceNumber": "+1", "dataMessage": {"message": "x"}}

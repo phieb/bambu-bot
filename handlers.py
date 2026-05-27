@@ -27,6 +27,8 @@ def _route(parsed):
         return "ignore"
     if parsed["has_link"]:
         return "group_link"
+    if parsed["is_help"]:
+        return "group_help"
     if parsed["is_cancel"]:
         return "group_cancel"
     if parsed["is_list"]:
@@ -55,6 +57,8 @@ async def handle(envelope):
             await _cancel(parsed["group_send_id"])
         elif route == "group_list":
             await _list(parsed["group_send_id"])
+        elif route == "group_help":
+            await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
     except Exception:
         log.exception("handle failed (route=%s)", route)
 
@@ -117,7 +121,7 @@ async def _config(group_id, message):
     await signal_client.send_to_group(
         group_id,
         f'✅ "{job["model_name"]}" ist in der Queue! Farben: {nums}\n'
-        f'(„abbrechen" zum Entfernen, „liste" für die Queue)',
+        f'(!abbrechen zum Entfernen · !liste für die Queue · !help für alle Befehle)',
     )
 
 

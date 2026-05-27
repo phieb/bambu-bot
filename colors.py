@@ -108,6 +108,19 @@ def ams_snapshot(status):
     return out
 
 
+HELP_TEXT = (
+    "🤖 Befehle (einfach hier reinschreiben):\n"
+    "• MakerWorld-Link → neuer Druckauftrag\n"
+    "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
+    "• !liste → zeigt die Druck-Queue\n"
+    "• !abbrechen → offene Farbfrage verwerfen, sonst letzten wartenden "
+    "Queue-Job entfernen (laufende Drucke bleiben)\n"
+    "• !help → diese Übersicht"
+)
+
+_HINT = "💡 !liste · !abbrechen · !help"
+
+
 def build_question(name, required, ams):
     color_lines = "\n".join(
         f"Farbe {c['index'] + 1}: {c['type']} {color_name(c['color'])}".rstrip() for c in required
@@ -122,7 +135,8 @@ def build_question(name, required, ams):
     return (
         f'🎨 "{name}" braucht {len(required)} Farbe(n):\n{color_lines}\n\n'
         f"AMS Slots:\n{ams_lines}\n\n"
-        f"Antworte mit einem Slot pro Farbe (in Reihenfolge), z.B: {example}"
+        f"Antworte mit einem Slot pro Farbe (in Reihenfolge), z.B: {example}\n\n"
+        f"{_HINT}"
     )
 
 
