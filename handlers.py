@@ -3,12 +3,14 @@ dispatcher asks before forwarding; `handle` does the real work."""
 import asyncio
 import json
 import logging
+import time
 
 import bambuddy
 import classify
 import colors
 import config
 import signal_client
+import slicing
 import store
 import swatch
 
@@ -120,15 +122,69 @@ async def _config(group_id, message):
         return
     if not store.claim_job_for_queue(group_id):
         return  # a duplicate/concurrent reply already queued it
-    resp = await bambuddy.queue(job["library_file_id"], mapping)
+    await signal_client.send_to_group(
+        group_id, f'🔧 Slice „{job["model_name"]}" für {config.PRINTER_MODEL} … (kurz Geduld)'
+    )
+    file_id, note = await _reslice(job["library_file_id"], required, ams, mapping)
+    resp = await bambuddy.queue(file_id, mapping)
     if isinstance(resp, dict) and resp.get("id"):
         store.set_queue_item_id(job["id"], resp["id"])
     nums = " ".join(str(m + 1) for m in mapping)
     await signal_client.send_to_group(
         group_id,
-        f'✅ "{job["model_name"]}" ist in der Queue! Farben: {nums}\n'
+        f'✅ "{job["model_name"]}" ist in der Queue! Farben: {nums}{note}\n'
         f'(!abbrechen zum Entfernen · !liste für die Queue · !help für alle Befehle)',
     )
+
+
+async def _reslice(library_file_id, required, ams, mapping):
+    """Re-slice the imported file for the target printer so it doesn't print
+    with the MakerWorld profile's machine slice (e.g. X1C on a P1S). Returns
+    (file_id_to_queue, note). On any miss, falls back to the original file so a
+    print is never lost — the note flags it."""
+    try:
+        presets = await bambuddy.get_presets()
+        printer_p = slicing.printer_preset(presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER)
+        process_p = slicing.process_preset(presets, config.PRINTER_MODEL)
+        filament_ps = []
+        for i in range(len(required)):
+            tray = next((a for a in ams if a["tray_id"] == mapping[i]), None) or {}
+            fp = slicing.filament_preset(
+                presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
+                tray.get("type") or "", tray.get("sub") or "",
+            )
+            if fp:
+                filament_ps.append(fp)
+        if not (printer_p and process_p and len(filament_ps) == len(required)):
+            log.warning("reslice: presets incomplete (printer=%s process=%s filament=%d/%d)",
+                        bool(printer_p), bool(process_p), len(filament_ps), len(required))
+            return library_file_id, " · ⚠️ Re-Slice übersprungen (Presets fehlen), drucke Original"
+        started = await bambuddy.slice_file(library_file_id, printer_p, process_p, filament_ps)
+        new_id = await _await_slice((started or {}).get("job_id"))
+        if new_id:
+            return new_id, f" · ♻️ für {config.PRINTER_MODEL} neu geslict"
+        return library_file_id, " · ⚠️ Re-Slice fehlgeschlagen, drucke Original"
+    except Exception:
+        log.exception("reslice failed")
+        return library_file_id, " · ⚠️ Re-Slice fehlgeschlagen, drucke Original"
+
+
+async def _await_slice(job_id, timeout=300, interval=4):
+    """Poll a slice job to completion → new library_file_id, or None."""
+    if not job_id:
+        return None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(interval)
+        job = await bambuddy.slice_job(job_id)
+        status = (job or {}).get("status")
+        if status in ("completed", "succeeded"):
+            return (job.get("result") or {}).get("library_file_id")
+        if status in ("failed", "error", "cancelled"):
+            log.warning("slice job %s %s: %s", job_id, status, (job or {}).get("error_detail"))
+            return None
+    log.warning("slice job %s timed out", job_id)
+    return None
 
 
 _STATUS_EMOJI = {

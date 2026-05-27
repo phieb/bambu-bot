@@ -7,3 +7,7 @@ BOT_NUMBER = os.environ.get("SIGNAL_BOT_NUMBER", "")
 DB_PATH = os.environ.get("DB_PATH", "/data/bambu.db")
 PRINTER_ID = int(os.environ.get("BAMBUDDY_PRINTER_ID", "1"))
 GROUP_NAME = os.environ.get("BAMBU_GROUP_NAME", "🖨️ Bambu Print Queue")
+# Target machine for re-slicing MakerWorld imports (they often arrive sliced for
+# X1C). Short code as it appears in slicer preset names (@BBL <model>).
+PRINTER_MODEL = os.environ.get("BAMBUDDY_PRINTER_MODEL", "P1S")
+NOZZLE_DIAMETER = os.environ.get("BAMBUDDY_NOZZLE", "0.4")

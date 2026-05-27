@@ -62,3 +62,28 @@ async def get_queue_item(item_id):
 async def delete_queue_item(item_id):
     """Remove a (pending) item from the queue. Does not stop a running print."""
     return await _delete(f"/api/v1/queue/{int(item_id)}")
+
+
+# ----- re-slicing (needs the slicer sidecar on :3001) -----
+
+async def get_presets():
+    """{cloud,standard,local}.{printer,process,filament} preset lists."""
+    return await _get("/api/v1/slicer/presets")
+
+
+async def slice_file(library_file_id, printer_preset, process_preset, filament_presets):
+    """Enqueue a slice job → {job_id}. filament_presets is mandatory (one ref
+    per model filament). Each *_preset is a {source, id} PresetRef."""
+    return await _post(
+        f"/api/v1/library/files/{int(library_file_id)}/slice",
+        {
+            "printer_preset": printer_preset,
+            "process_preset": process_preset,
+            "filament_presets": filament_presets,
+        },
+    )
+
+
+async def slice_job(job_id):
+    """Slice job status; on completion ``result.library_file_id`` is the new file."""
+    return await _get(f"/api/v1/slice-jobs/{int(job_id)}")
