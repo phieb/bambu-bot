@@ -91,6 +91,98 @@ def cover_url(resolved):
     return design.get("coverUrl") or design.get("cover_url") or ""
 
 
+def _compat_names(inst):
+    """Every printer model a profile lists as compatible (primary first)."""
+    names = []
+    c = inst.get("compatibility") or {}
+    if c.get("devProductName"):
+        names.append(c["devProductName"])
+    for o in inst.get("otherCompatibility") or []:
+        if o.get("devProductName"):
+            names.append(o["devProductName"])
+    return names
+
+
+def profiles_list(resolved, target=""):
+    """MakerWorld print profiles of a model: [{index, profile_id, title, printer,
+    is_target, author, score}]. ``is_target`` flags profiles made for our printer
+    (e.g. P1S), used to mark them and count them in the question."""
+    out = []
+    for i, inst in enumerate(resolved.get("instances") or []):
+        names = _compat_names(inst)
+        creator = inst.get("creator") or {}
+        out.append({
+            "index": i,
+            "profile_id": inst.get("profileId") or inst.get("profile_id"),
+            "title": inst.get("title") or inst.get("name") or "Profil",
+            "printer": names[0] if names else "?",
+            "is_target": bool(target) and any(target.lower() == n.lower() for n in names),
+            "author": creator.get("name") or "",
+            "score": inst.get("score") or 0,
+        })
+    return out
+
+
+def build_profile_question(name, profiles, target="P1S"):
+    n_target = sum(1 for p in profiles if p["is_target"])
+    head = f'🧩 „{name}" hat {len(profiles)} Profile'
+    if n_target:
+        head += f" ({n_target} davon für deinen {target})"
+    lines = []
+    for i, p in enumerate(profiles, 1):
+        mark = "✅" if p["is_target"] else "▫️"
+        extra = []
+        if p["author"]:
+            extra.append(f"von {p['author']}")
+        if p["score"]:
+            extra.append(f"★{p['score']}")
+        tail = (" · " + " · ".join(extra)) if extra else ""
+        lines.append(f'{i}. {mark} {p["printer"]} · „{p["title"]}"{tail}')
+    return (
+        f"{head}:\n" + "\n".join(lines) +
+        "\n\nWelches Profil willst du drucken? Antworte mit der Zahl."
+    )
+
+
+def plate_required(plate):
+    """A plate's filaments as required colors: [{index, type, color, name}]."""
+    out = []
+    for i, f in enumerate(plate.get("filaments") or []):
+        out.append({
+            "index": i,
+            "type": f.get("type") or "",
+            "color": (f.get("color") or "").lstrip("#").upper()[:6],
+            "name": f.get("name") or "",
+        })
+    return out
+
+
+def _fmt_minutes(seconds):
+    m = round((seconds or 0) / 60)
+    return f"{m} min" if m < 60 else f"{m // 60}h{m % 60:02d}"
+
+
+def build_plate_question(name, plates):
+    lines = []
+    for i, p in enumerate(plates, 1):
+        cols = ", ".join(
+            f"{f.get('type') or ''} {color_name(f.get('color'))}".strip()
+            for f in (p.get("filaments") or [])
+        )
+        meta = []
+        if p.get("print_time_seconds"):
+            meta.append(_fmt_minutes(p["print_time_seconds"]))
+        if p.get("filament_used_grams"):
+            meta.append(f"{round(p['filament_used_grams'])} g")
+        tail = (" · " + " · ".join(meta)) if meta else ""
+        pname = p.get("name") or f"Plate {p.get('index')}"
+        lines.append(f'{i}. „{pname}" — {cols or "?"}{tail}')
+    return (
+        f'🗂️ „{name}" hat {len(plates)} Plates:\n' + "\n".join(lines) +
+        "\n\nWelche willst du drucken? Eine oder mehrere Zahlen, z.B. „1“ oder „1 3“."
+    )
+
+
 def ams_snapshot(status):
     """First AMS unit's trays: [{slot, tray_id, type, color, sub}] (slot = tray_id+1)."""
     ams_units = status.get("ams") or []

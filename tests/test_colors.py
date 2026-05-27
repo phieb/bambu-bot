@@ -76,6 +76,52 @@ def test_build_question_uses_names_not_hex():
     assert "#" not in q and "Weiß" in q and "Schwarz" in q
 
 
+PROFILES_RESOLVED = {
+    "design": {"title": "X1 & P1 Model"},
+    "instances": [
+        {"profileId": 11, "title": "fine", "creator": {"name": "alice"}, "score": 5,
+         "compatibility": {"devProductName": "P1S"},
+         "otherCompatibility": [{"devProductName": "X1 Carbon"}]},
+        {"profileId": 22, "title": "draft", "creator": {"name": "bob"},
+         "otherCompatibility": [{"devProductName": "H2D"}]},
+    ],
+}
+
+
+def test_profiles_list_flags_target_printer():
+    profs = colors.profiles_list(PROFILES_RESOLVED, "P1S")
+    assert [p["profile_id"] for p in profs] == [11, 22]
+    assert profs[0]["is_target"] and not profs[1]["is_target"]
+    assert profs[0]["printer"] == "P1S" and profs[1]["printer"] == "H2D"
+
+
+def test_build_profile_question_counts_target():
+    profs = colors.profiles_list(PROFILES_RESOLVED, "P1S")
+    q = colors.build_profile_question("X1 & P1 Model", profs, "P1S")
+    assert "1 davon für deinen P1S" in q
+    assert "✅ P1S" in q and "von alice" in q and "★5" in q
+
+
+PLATES = [
+    {"index": 1, "name": "ABS", "filaments": [{"type": "ABS", "color": "#E05028"}],
+     "print_time_seconds": 1267, "filament_used_grams": 5.0},
+    {"index": 2, "name": "PETG_HF", "filaments": [{"type": "PETG", "color": "#FFFFFF"}],
+     "print_time_seconds": 1254, "filament_used_grams": 6.2},
+]
+
+
+def test_plate_required_is_per_plate():
+    # the key multi-plate fix: one filament for this plate, not the model-wide union
+    req = colors.plate_required(PLATES[1])
+    assert len(req) == 1 and req[0]["type"] == "PETG" and req[0]["color"] == "FFFFFF"
+
+
+def test_build_plate_question_lists_plates():
+    q = colors.build_plate_question("Diffuser", PLATES)
+    assert "2 Plates" in q and "ABS" in q and "PETG_HF" in q
+    assert "21 min" in q and "5 g" in q  # time + weight formatted
+
+
 def test_color_name_basics():
     assert colors.color_name("FFFFFF") == "Weiß"
     assert colors.color_name("000000") == "Schwarz"

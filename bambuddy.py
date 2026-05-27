@@ -51,17 +51,38 @@ async def camera_snapshot(printer_id):
         return None
 
 
-async def queue(library_file_id, ams_mapping):
-    return await _post(
-        "/api/v1/queue/",
-        {
-            "library_file_id": int(library_file_id),
-            "ams_mapping": ams_mapping,
-            "gcode_injection": True,
-            "use_ams": True,
-            "printer_id": None,  # auto-dispatch
-        },
-    )
+async def queue(library_file_id, ams_mapping, plate_id=None):
+    body = {
+        "library_file_id": int(library_file_id),
+        "ams_mapping": ams_mapping,
+        "gcode_injection": True,
+        "use_ams": True,
+        "printer_id": None,  # auto-dispatch
+    }
+    if plate_id is not None:
+        body["plate_id"] = int(plate_id)  # which plate of a multi-plate 3MF
+    return await _post("/api/v1/queue/", body)
+
+
+async def list_plates(library_file_id):
+    """Plates of a (possibly multi-plate) library file:
+    {is_multi_plate, plates:[{index, name, filaments:[{type,color,...}], ...}]}."""
+    return await _get(f"/api/v1/library/files/{int(library_file_id)}/plates")
+
+
+async def plate_thumbnail(library_file_id, plate_index):
+    """Rendered PNG of a single plate as raw bytes, or None (best-effort)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                config.BAMBUDDY_URL
+                + f"/api/v1/library/files/{int(library_file_id)}/plate-thumbnail/{int(plate_index)}"
+            )
+            r.raise_for_status()
+            ct = r.headers.get("content-type", "")
+            return r.content if "image" in ct and r.content else None
+    except Exception:
+        return None
 
 
 async def list_queue():
@@ -91,17 +112,18 @@ async def filament_id_map():
     return await _get("/api/v1/cloud/filament-id-map")
 
 
-async def slice_file(library_file_id, printer_preset, process_preset, filament_presets):
+async def slice_file(library_file_id, printer_preset, process_preset, filament_presets, plate=None):
     """Enqueue a slice job → {job_id}. filament_presets is mandatory (one ref
-    per model filament). Each *_preset is a {source, id} PresetRef."""
-    return await _post(
-        f"/api/v1/library/files/{int(library_file_id)}/slice",
-        {
-            "printer_preset": printer_preset,
-            "process_preset": process_preset,
-            "filament_presets": filament_presets,
-        },
-    )
+    per model filament). Each *_preset is a {source, id} PresetRef. ``plate`` is
+    the 1-based plate to slice (None → plate 1); the result is a single-plate file."""
+    body = {
+        "printer_preset": printer_preset,
+        "process_preset": process_preset,
+        "filament_presets": filament_presets,
+    }
+    if plate is not None:
+        body["plate"] = int(plate)
+    return await _post(f"/api/v1/library/files/{int(library_file_id)}/slice", body)
 
 
 async def slice_job(job_id):
