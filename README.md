@@ -63,6 +63,6 @@ your dispatcher and your Signal REST API, set the env vars, then
 ## Dev / tests
 
 ```bash
-python3 -m venv .venv && ./.venv/bin/pip install pytest -r requirements.txt
+python3 -m venv .venv && ./.venv/bin/pip install -r requirements-dev.txt
 ./.venv/bin/python -m pytest tests -q
 ```

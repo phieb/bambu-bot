@@ -4,10 +4,12 @@ import logging
 
 from fastapi import BackgroundTasks, FastAPI, Request
 
+import classify
 import handlers
 import store
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("bambu-bot")
 app = FastAPI(title="bambu-bot")
 
 
@@ -21,26 +23,24 @@ def health():
     return {"status": "ok"}
 
 
-def _envelope(payload):
-    """Accept either the bare envelope, or {envelope:...}, or {body:{envelope:...}}."""
-    if not isinstance(payload, dict):
-        return {}
-    if "envelope" in payload:
-        return payload["envelope"]
-    body = payload.get("body")
-    if isinstance(body, dict) and "envelope" in body:
-        return body["envelope"]
-    return payload
-
-
 @app.post("/claims")
 async def claims(request: Request):
+    """Side-effect-free routing probe. Claims if ANY forwarded envelope is ours.
+
+    Accepts a single envelope or a list in any wrap shape (see
+    ``classify.to_envelopes``), so it parses identically to ``/receive``.
+    """
     payload = await request.json()
-    return {"claims": handlers.claims(_envelope(payload))}
+    envelopes = classify.to_envelopes(payload)
+    claimed = any(handlers.claims(e) for e in envelopes)
+    logger.info("/claims envelopes=%d claimed=%s", len(envelopes), claimed)
+    return {"claims": claimed}
 
 
 @app.post("/receive")
 async def receive(request: Request, background: BackgroundTasks):
     payload = await request.json()
-    background.add_task(handlers.handle, _envelope(payload))
+    envelopes = classify.to_envelopes(payload)
+    for env in envelopes:
+        background.add_task(handlers.handle, env)
     return {"status": "accepted"}

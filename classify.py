@@ -56,3 +56,27 @@ def classify(envelope):
         "has_link": bool(url),
         "is_numbered": bool(_NUMBERED.match(message)),
     }
+
+
+def to_envelopes(payload):
+    """Normalize any dispatcher payload into a list of inner Signal envelopes
+    (each with ``dataMessage``/``source`` at the top level).
+
+    Accepts a single envelope or a list, in any wrap shape: bare, ``{envelope:…}``,
+    ``{body:{envelope:…}}``, ``{body:[…]}``, or a raw list. Mirrors the ttrpg-bot
+    parser so both tools behind the shared dispatcher parse identically.
+    """
+    if isinstance(payload, dict) and isinstance(payload.get("body"), list):
+        payload = payload["body"]
+    items = payload if isinstance(payload, list) else [payload]
+    envelopes = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if "envelope" in item:
+            envelopes.append(item["envelope"] or {})
+        elif isinstance(item.get("body"), dict) and "envelope" in item["body"]:
+            envelopes.append(item["body"]["envelope"] or {})
+        else:
+            envelopes.append(item)
+    return envelopes
