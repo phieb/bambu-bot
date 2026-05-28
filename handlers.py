@@ -367,6 +367,11 @@ async def _ask_colors(group_id, job_id, lfid, label, plate):
     (plate thumbnail + swatch). ``label`` is the display title (incl. plate name
     when relevant)."""
     required = colors.plate_required(plate)
+    if not required:
+        # Some single-colour models / raw STLs report a plate with no filament
+        # list — treat it as one filament so the user picks a single slot. (0
+        # colours would dead-end parse_reply and leave re-slice without a preset.)
+        required = [{"index": 0, "type": "", "color": "", "name": ""}]
     status = await bambuddy.printer_status(config.PRINTER_ID)
     ams = colors.ams_snapshot(status)
     store.update_dialog(
