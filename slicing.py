@@ -25,6 +25,15 @@ def _ref(p):
     return {"source": p["source"], "id": p["id"]} if p else None
 
 
+def _sliceable(p):
+    """Personal/custom filament presets (id ``PFUS…``, synced from non-Bambu
+    spools like SUNLU/eSUN) make the slicer sidecar fail with "input preset file
+    is invalid and can not be parsed" — only Bambu *system* presets (``GF…``)
+    are parseable, so we skip the custom ones and fall back to a Bambu preset of
+    the same type."""
+    return not (p.get("id") or "").upper().startswith("PFUS")
+
+
 def printer_preset(presets, model, nozzle):
     """The ``Bambu Lab <model> <nozzle> nozzle`` printer preset."""
     want = f"Bambu Lab {model} {nozzle} nozzle"
@@ -51,10 +60,11 @@ def filament_preset(presets, model, nozzle, tray_type, sub_brand, filament_name=
     e.g. 'eSUN PETG Basic') is the strongest signal — it pins the *actual* spool,
     including non-Bambu ones. Falls back to sub-brand, then generic Bambu."""
     noz = f"{nozzle} nozzle"
-    cands = [p for p in _all(presets, "filament")
+    pool = [p for p in _all(presets, "filament") if _sliceable(p)]
+    cands = [p for p in pool
              if model in p["name"] and noz in p["name"] and tray_type and tray_type in p["name"]]
     if not cands:  # last resort: ignore type, just the right printer/nozzle
-        cands = [p for p in _all(presets, "filament") if model in p["name"] and noz in p["name"]]
+        cands = [p for p in pool if model in p["name"] and noz in p["name"]]
     if not cands:
         return None
 

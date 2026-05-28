@@ -264,10 +264,16 @@ def _plate_source(plate, job_lfid):
     return plate.get("library_file_id") or job_lfid, plate.get("src_plate", plate.get("index"))
 
 
+async def _thumbnail(lfid, plate_index):
+    """Best-effort preview: a rendered plate thumbnail, or the file's model
+    thumbnail (raw STLs have no plate render but do have a model thumbnail)."""
+    return await bambuddy.plate_thumbnail(lfid, plate_index) or await bambuddy.file_thumbnail(lfid)
+
+
 async def _send_plate_question(group_id, lfid, name, plates):
     text = colors.build_plate_question(name, plates)
     srcs = [_plate_source(p, lfid) for p in plates]
-    raws = await asyncio.gather(*(bambuddy.plate_thumbnail(l, idx) for l, idx in srcs))
+    raws = await asyncio.gather(*(_thumbnail(l, idx) for l, idx in srcs))
     shrunk = await asyncio.gather(*(asyncio.to_thread(swatch.shrink_image, r) for r in raws if r))
     attachments = [s for s in shrunk if s]
     await signal_client.send_to_group(group_id, text, attachments=attachments or None)
@@ -287,7 +293,7 @@ async def _ask_colors(group_id, job_id, lfid, label, plate):
     )
     src_lfid, src_idx = _plate_source(plate, lfid)
     raw, chart = await asyncio.gather(
-        bambuddy.plate_thumbnail(src_lfid, src_idx),
+        _thumbnail(src_lfid, src_idx),
         asyncio.to_thread(swatch.build, label, required, ams),
     )
     thumb = await asyncio.to_thread(swatch.shrink_image, raw) if raw else None

@@ -127,6 +127,19 @@ async def plate_thumbnail(library_file_id, plate_index):
         return None
 
 
+async def file_thumbnail(library_file_id):
+    """Model thumbnail PNG of a library file as raw bytes, or None. Raw STLs have
+    no per-plate render but do get a model thumbnail (best-effort)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(config.BAMBUDDY_URL + f"/api/v1/library/files/{int(library_file_id)}/thumbnail")
+            r.raise_for_status()
+            ct = r.headers.get("content-type", "")
+            return r.content if "image" in ct and r.content else None
+    except Exception:
+        return None
+
+
 async def clear_plate(printer_id):
     """Acknowledge the build plate is cleared so the scheduler starts the next
     queued print. Sends no MQTT command — just sets Bambuddy's plate-cleared flag."""
