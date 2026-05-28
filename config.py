@@ -11,3 +11,5 @@ GROUP_NAME = os.environ.get("BAMBU_GROUP_NAME", "🖨️ Bambu Print Queue")
 # X1C). Short code as it appears in slicer preset names (@BBL <model>).
 PRINTER_MODEL = os.environ.get("BAMBUDDY_PRINTER_MODEL", "P1S")
 NOZZLE_DIAMETER = os.environ.get("BAMBUDDY_NOZZLE", "0.4")
+# Library folder that Signal-uploaded files land in (created if missing).
+SIGNAL_FOLDER_NAME = os.environ.get("BAMBU_SIGNAL_FOLDER", "signal")

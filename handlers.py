@@ -33,6 +33,8 @@ def _route(parsed):
     if parsed["is_dm"]:
         if parsed["has_link"]:
             return "dm_link"
+        if parsed["has_model_file"]:
+            return "dm_file"
         if parsed["is_other_model"]:
             return "dm_other_model"
         return "ignore"
@@ -41,6 +43,8 @@ def _route(parsed):
         return "ignore"
     if parsed["has_link"]:
         return "group_link"
+    if parsed["has_model_file"]:
+        return "group_file"
     if parsed["is_other_model"]:
         return "group_other_model"
     if parsed["is_help"]:
@@ -77,6 +81,11 @@ async def handle(envelope):
             await signal_client.send_to_group(group_id, colors.OTHER_MODEL_TEXT)
         elif route == "group_other_model":
             await signal_client.send_to_group(parsed["group_send_id"], colors.OTHER_MODEL_TEXT)
+        elif route == "dm_file":
+            group_id = await _ensure_group(parsed["sender"])
+            await _intake_file(group_id, parsed["sender"], parsed["model_files"][0])
+        elif route == "group_file":
+            await _intake_file(parsed["group_send_id"], parsed["sender"], parsed["model_files"][0])
         elif route == "group_reply":
             await _reply(parsed["group_send_id"], parsed["message"])
         elif route == "group_cancel":
@@ -139,19 +148,72 @@ async def _intake(group_id, sender, url):
 
 
 async def _after_profile(group_id, job_id, model_id, name, profile_id):
-    """Import the chosen profile, then branch on plate count."""
+    """Import the chosen profile, then hand off to the shared plate/color tail."""
     imported = await bambuddy.import_model(model_id, profile_id)
-    lfid = imported["library_file_id"]
+    store.update_dialog(job_id, profile_id=profile_id)
+    await _from_library_file(group_id, job_id, name, imported["library_file_id"])
+
+
+async def _from_library_file(group_id, job_id, name, lfid):
+    """Given a library file (MakerWorld import or Signal upload), branch on plate
+    count and start the plate/color dialog. A file with no plates (e.g. a raw
+    STL) is treated as a single one-filament plate so the user picks one slot."""
     data = await bambuddy.list_plates(lfid)
     plates = (data or {}).get("plates") or []
-    store.update_dialog(job_id, profile_id=profile_id, library_file_id=lfid, plates=json.dumps(plates))
+    store.update_dialog(job_id, library_file_id=lfid, plates=json.dumps(plates))
     if len(plates) > 1:
         store.update_dialog(job_id, stage="awaiting_plate")
         await _send_plate_question(group_id, lfid, name, plates)
         return
-    plate = plates[0] if plates else {"index": 1, "name": "", "filaments": []}
+    plate = plates[0] if plates else {"index": 1, "name": "", "filaments": [{"type": "PLA", "color": ""}]}
     store.update_dialog(job_id, pending_plates=json.dumps([]))
     await _ask_colors(group_id, job_id, lfid, name, plate)
+
+
+async def _intake_file(group_id, sender, file_meta):
+    """A Signal-uploaded model file: fetch it, upload to the Signal library
+    folder, then run the same plate/color flow. A pre-sliced .gcode is queued
+    straight away (no colors)."""
+    if store.active_job(group_id):
+        await signal_client.send_to_group(
+            group_id,
+            "⏳ Du hast noch einen offenen Job — bitte konfigurier den zuerst, "
+            "dann schick die nächste Datei.",
+        )
+        return
+    name = file_meta["filename"]
+    await signal_client.send_to_group(group_id, f'⬆️ „{name}" wird hochgeladen …')
+    content = await signal_client.fetch_attachment(file_meta["id"])
+    if not content:
+        await signal_client.send_to_group(group_id, "❌ Konnte die Datei nicht von Signal laden.")
+        return
+    try:
+        folder_id = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
+        uploaded = await bambuddy.upload_library_file(content, name, folder_id)
+        lfid = uploaded["id"]
+    except Exception:
+        log.exception("upload failed")
+        await signal_client.send_to_group(group_id, "❌ Upload nach Bambuddy fehlgeschlagen.")
+        return
+    job_id = store.create_dialog(group_id, sender, None, name)
+    store.update_dialog(job_id, stage="configuring")
+    try:
+        if file_meta["kind"] == "gcode":
+            # Already sliced for a machine — queue as-is, no color dialog.
+            resp = await bambuddy.queue(lfid, [], plate_id=None)
+            item_id = resp.get("id") if isinstance(resp, dict) else None
+            store.add_queued(group_id, sender, name, lfid, item_id)
+            store.delete_job(job_id)
+            await signal_client.send_to_group(
+                group_id,
+                f'✅ „{name}" ist in der Queue (vorgeslict)! Ich sag Bescheid, wenn er fertig ist.',
+            )
+        else:
+            await _from_library_file(group_id, job_id, name, lfid)
+    except Exception:
+        log.exception("file intake failed")
+        store.discard_dialog(job_id)
+        await signal_client.send_to_group(group_id, "❌ Da ist beim Einreihen was schiefgelaufen.")
 
 
 async def _send_plate_question(group_id, lfid, name, plates):

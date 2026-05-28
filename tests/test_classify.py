@@ -46,6 +46,29 @@ def test_plain_text_is_not_other_model():
     assert not p["is_other_model"]
 
 
+def _att(filename):
+    return {"sourceNumber": "+43111", "dataMessage": {"attachments": [{"id": "abc123", "filename": filename}]}}
+
+
+def test_model_file_attachment_recognized():
+    for fn, kind in (("benchy.3mf", "3mf"), ("part.STL", "stl"),
+                     ("plate.gcode", "gcode"), ("job.gcode.3mf", "gcode")):
+        p = classify.classify(_att(fn))
+        assert p["has_model_file"], fn
+        assert p["model_files"][0]["kind"] == kind, fn
+        assert p["model_files"][0]["id"] == "abc123"
+
+
+def test_non_model_attachment_ignored():
+    p = classify.classify(_att("photo.jpg"))
+    assert not p["has_model_file"] and p["model_files"] == []
+
+
+def test_no_attachments_no_model_file():
+    p = classify.classify({"sourceNumber": "+43111", "dataMessage": {"message": "hi"}})
+    assert not p["has_model_file"]
+
+
 def test_group_numbered_reply():
     env = {"sourceNumber": "+43111", "dataMessage": {"message": "3 1", "groupInfo": {"groupId": INTERNAL}}}
     p = classify.classify(env)

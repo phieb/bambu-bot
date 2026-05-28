@@ -58,6 +58,31 @@ def find_url(message):
     return url
 
 
+# Attachment file types we can take into Bambuddy. Longest suffix first so
+# ".gcode.3mf" is classified as gcode (already sliced) rather than 3mf.
+_MODEL_EXTS = (".gcode.3mf", ".gcode", ".3mf", ".stl")
+
+
+def model_files(dm):
+    """Model-file attachments of a dataMessage as
+    [{id, filename, kind}] where kind is 'gcode' | '3mf' | 'stl'. Non-model
+    attachments (photos, …) are ignored so stray group media never triggers."""
+    out = []
+    for att in dm.get("attachments") or []:
+        if not isinstance(att, dict):
+            continue
+        name = (att.get("filename") or "").strip()
+        low = name.lower()
+        ext = next((e for e in _MODEL_EXTS if low.endswith(e)), "")
+        if not ext:
+            continue
+        kind = "gcode" if ext.startswith(".gcode") else ext.lstrip(".")
+        att_id = att.get("id") or att.get("attachment") or att.get("contentType")
+        if att_id:
+            out.append({"id": att_id, "filename": name, "kind": kind})
+    return out
+
+
 def classify(envelope):
     env = envelope or {}
     sender = env.get("sourceNumber") or env.get("source") or env.get("sourceUuid") or ""
@@ -67,6 +92,7 @@ def classify(envelope):
     raw_group = (group_info.get("groupId") or group_info.get("id") or "") if group_info else ""
     internal, send_id = normalize_group(raw_group)
     url = find_url(message)
+    files = model_files(dm)
     # An "other" model link only counts when it isn't a MakerWorld link (those
     # take the full flow); presence is enough to trigger the helpful reply.
     is_other_model = bool(_OTHER_MODEL.search(message)) and not url
@@ -78,6 +104,8 @@ def classify(envelope):
         "group_send_id": send_id,
         "url": url,
         "has_link": bool(url),
+        "model_files": files,
+        "has_model_file": bool(files),
         "is_other_model": is_other_model,
         "is_numbered": bool(_NUMBERED.match(message)),
         "is_cancel": bool(_CANCEL.match(message)),

@@ -204,6 +204,7 @@ def ams_snapshot(status):
 HELP_TEXT = (
     "🤖 Befehle (einfach hier reinschreiben):\n"
     "• MakerWorld-Link → neuer Druckauftrag\n"
+    "• Datei-Anhang (.3mf/.gcode/.stl) → direkt drucken\n"
     "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
     "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
     "• !liste → zeigt die Druck-Queue\n"
@@ -217,11 +218,10 @@ HELP_TEXT = (
 _HINT = "💡 !progress · !liste · !go · !abbrechen · !help"
 
 OTHER_MODEL_TEXT = (
-    "🔗 Das sieht nach einem 3D-Modell-Link aus — automatisch einreihen kann ich "
-    "aber aktuell nur **MakerWorld**-Links.\n"
-    "Für Printables/Cults3D/Thingiverse & Co. fehlt mir die Auflösung. Vorerst "
-    "müsstest du das Modell manuell in Bambuddy importieren.\n"
-    "(Datei-Anhang-Import ist geplant — dann kannst du mir die .3mf direkt schicken.)"
+    "🔗 Das sieht nach einem 3D-Modell-Link aus — Links automatisch auflösen kann "
+    "ich aber nur bei **MakerWorld**.\n"
+    "Für Printables/Cults3D/Thingiverse & Co.: lad die Datei runter und **schick "
+    "sie mir direkt als Anhang** (.3mf, .gcode oder .stl) — die reihe ich dann ein."
 )
 
 

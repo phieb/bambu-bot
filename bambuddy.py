@@ -64,6 +64,36 @@ async def queue(library_file_id, ams_mapping, plate_id=None):
     return await _post("/api/v1/queue/", body)
 
 
+async def list_folders():
+    """Library folders: [{id, name, ...}]."""
+    return await _get("/api/v1/library/folders/")
+
+
+async def create_folder(name):
+    return await _post("/api/v1/library/folders/", {"name": name})
+
+
+async def ensure_folder(name):
+    """Return the id of the library folder named ``name``, creating it if absent."""
+    folders = await list_folders()
+    for f in folders if isinstance(folders, list) else []:
+        if (f.get("name") or "").lower() == name.lower():
+            return f.get("id")
+    created = await create_folder(name)
+    return created.get("id") if isinstance(created, dict) else None
+
+
+async def upload_library_file(content, filename, folder_id=None):
+    """Upload a file into the library → {id, filename, file_type, ...}. The
+    returned ``id`` is the library_file_id usable for plates/slice/queue."""
+    params = {} if folder_id is None else {"folder_id": int(folder_id)}
+    files = {"file": (filename, content, "application/octet-stream")}
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.post(config.BAMBUDDY_URL + "/api/v1/library/files/", params=params, files=files)
+        r.raise_for_status()
+        return r.json()
+
+
 async def list_plates(library_file_id):
     """Plates of a (possibly multi-plate) library file:
     {is_multi_plate, plates:[{index, name, filaments:[{type,color,...}], ...}]}."""
