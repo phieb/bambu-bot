@@ -85,6 +85,12 @@ async def plate_thumbnail(library_file_id, plate_index):
         return None
 
 
+async def clear_plate(printer_id):
+    """Acknowledge the build plate is cleared so the scheduler starts the next
+    queued print. Sends no MQTT command — just sets Bambuddy's plate-cleared flag."""
+    return await _post(f"/api/v1/printers/{printer_id}/clear-plate", {})
+
+
 async def list_queue():
     """All queue items: [{id, status, library_file_name, position, ...}]."""
     return await _get("/api/v1/queue/")

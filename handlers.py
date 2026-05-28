@@ -45,6 +45,8 @@ def _route(parsed):
         return "group_list"
     if parsed["is_progress"]:
         return "group_progress"
+    if parsed["is_go"]:
+        return "group_go"
     if parsed["is_numbered"]:
         return "group_reply"
     return "ignore"
@@ -71,6 +73,8 @@ async def handle(envelope):
             await _list(parsed["group_send_id"])
         elif route == "group_progress":
             await _progress(parsed["group_send_id"])
+        elif route == "group_go":
+            await _go(parsed["group_send_id"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
     except Exception:
@@ -442,6 +446,22 @@ async def _progress(group_id):
     await signal_client.send_to_group(group_id, " · ".join(parts), attachments=attachments)
 
 
+async def _go(group_id):
+    """Confirm the build plate is clear so Bambuddy releases the next queued print
+    (Bambuddy is set to wait for manual plate-clear confirmation between jobs)."""
+    try:
+        await bambuddy.clear_plate(config.PRINTER_ID)
+    except Exception:
+        log.exception("clear-plate failed")
+        await signal_client.send_to_group(
+            group_id, "❌ Konnte die Platte nicht freigeben — probier's gleich nochmal."
+        )
+        return
+    await signal_client.send_to_group(
+        group_id, "✅ Platte als frei bestätigt — der nächste Druck kann starten. 🚀"
+    )
+
+
 async def poll_completions(interval=60):
     """Watch bot-queued jobs and message the group when each finishes/fails.
     Prints started via other channels aren't tracked here, so they're skipped."""
@@ -459,7 +479,9 @@ async def _check_completions():
         status = (item or {}).get("status")
         if status == "completed":
             await signal_client.send_to_group(
-                job["group_id"], f'✅ „{job["model_name"]}" ist fertig gedruckt! 🎉'
+                job["group_id"],
+                f'✅ „{job["model_name"]}" ist fertig gedruckt! 🎉\n'
+                "Wenn die Platte frei ist: !go → nächster Druck startet.",
             )
             store.set_stage(job["id"], "done")
         elif status == "failed":

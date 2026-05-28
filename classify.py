@@ -11,6 +11,8 @@ _CANCEL = re.compile(r"^\s*!\s*(abbrechen|abbruch|abbrich|cancel|verwerfen|stopp
 _LIST = re.compile(r"^\s*!\s*(liste?|queue|warteschlange)\s*$", re.I)
 _PROGRESS = re.compile(r"^\s*!\s*(progress|fortschritt|status|druck)\s*$", re.I)
 _HELP = re.compile(r"^\s*!\s*(hilfe|help|befehle|commands|\?)\s*$", re.I)
+# Acknowledge the build plate is clear so Bambuddy starts the next queued print.
+_GO = re.compile(r"^\s*!\s*(go|los|weiter|frei|clear)\s*$", re.I)
 
 
 def normalize_group(raw):
@@ -65,6 +67,7 @@ def classify(envelope):
         "is_list": bool(_LIST.match(message)),
         "is_progress": bool(_PROGRESS.match(message)),
         "is_help": bool(_HELP.match(message)),
+        "is_go": bool(_GO.match(message)),
     }
 
 

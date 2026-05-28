@@ -77,6 +77,14 @@ def test_help_keywords():
     assert not _grp("3 1")["is_help"]
 
 
+def test_go_keywords():
+    for m in ("!go", "!Go", " !los ", "!weiter", "!frei", "!clear"):
+        assert _grp(m)["is_go"], m
+    assert not _grp("go")["is_go"]  # needs the ! prefix
+    assert not _grp("3 1")["is_go"]
+    assert not _grp("!go jetzt")["is_go"]  # whole message only
+
+
 INNER = {"sourceNumber": "+1", "dataMessage": {"message": "x"}}
 
 
