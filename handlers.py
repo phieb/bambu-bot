@@ -63,7 +63,16 @@ def _route(parsed):
 
 
 def claims(envelope):
-    return _route(classify.classify(envelope)) != "ignore"
+    """Whether this bot owns the message. In one of our registered groups we own
+    *every* message — even plain chatter — so the dispatcher routes the whole
+    group to us and nothing leaks to other tools; handle() just no-ops on
+    non-actionable messages. DMs are only claimed when actually actionable."""
+    parsed = classify.classify(envelope)
+    if not parsed["is_dm"]:
+        gid = parsed["group_send_id"]
+        if gid and store.get_group_by_group_id(gid):
+            return True
+    return _route(parsed) != "ignore"
 
 
 async def handle(envelope):
