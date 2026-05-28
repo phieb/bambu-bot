@@ -151,13 +151,14 @@ async def file_thumbnail(library_file_id):
 
 
 async def get_gcode(library_file_id):
-    """Raw G-code text of a (sliced) library file, or None (best-effort). Used to
-    read the print height from the ``; max_z_height:`` header comment."""
+    """Raw bytes of a sliced library file, or None (best-effort). For a
+    ``.gcode.3mf`` this is a zip container (the plate gcode lives inside under
+    ``Metadata/plate_*.gcode``); a plain ``.gcode`` upload is the text itself."""
     try:
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.get(config.BAMBUDDY_URL + f"/api/v1/library/files/{int(library_file_id)}/gcode")
             r.raise_for_status()
-            return r.text
+            return r.content
     except Exception:
         return None
 

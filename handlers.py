@@ -7,10 +7,12 @@ The profile and plate steps auto-skip when there's only one of each. A numbered
 reply means whatever the current stage expects, so it's dispatched on stage.
 """
 import asyncio
+import io
 import json
 import logging
 import re
 import time
+import zipfile
 
 import bambuddy
 import classify
@@ -514,14 +516,33 @@ EJECT_FLAG = "eject_enabled"
 _MAX_Z_RE = re.compile(r"^;\s*max_z_height:\s*([0-9.]+)", re.M)
 
 
+def _max_z_height(data):
+    """Highest ``; max_z_height:`` across a sliced file's plate gcode(s), or None.
+    A library ``.gcode.3mf`` is a zip (gcode under ``Metadata/plate_*.gcode``); a
+    plain ``.gcode`` upload is the text itself. (Parsing G1 Z moves is unreliable
+    — the end-gcode parks the bed at Z250.)"""
+    heights = []
+    if data[:2] == b"PK":  # zip container
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+            for n in z.namelist():
+                if n.startswith("Metadata/plate_") and n.endswith(".gcode"):
+                    m = _MAX_Z_RE.search(z.read(n).decode("utf-8", "replace"))
+                    if m:
+                        heights.append(float(m.group(1)))
+        except (zipfile.BadZipFile, KeyError):
+            return None
+    else:
+        m = _MAX_Z_RE.search(data.decode("utf-8", "replace"))
+        if m:
+            heights.append(float(m.group(1)))
+    return max(heights) if heights else None
+
+
 async def _print_height(file_id):
-    """Print height (mm) from the sliced gcode ``; max_z_height:`` header, or None.
-    (Parsing G1 Z moves is unreliable — the end-gcode parks the bed at Z250.)"""
-    text = await bambuddy.get_gcode(file_id)
-    if not text:
-        return None
-    m = _MAX_Z_RE.search(text)
-    return float(m.group(1)) if m else None
+    """Print height (mm) of a sliced library file, or None if unavailable."""
+    data = await bambuddy.get_gcode(file_id)
+    return _max_z_height(data) if data else None
 
 
 async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None):
@@ -576,6 +597,7 @@ async def _slice_all(group_id, job, decisions, plates):
             group_id, f'🔧 Alle Farben da — ich slice & reihe jetzt {n} Plates ein … (kurz Geduld)'
         )
     lines = []
+    queued_n = 0
     for d in decisions:
         plate = next((p for p in plates if p.get("index") == d["index"]), {"index": d["index"]})
         label = _plate_label(job["model_name"], plate, multi)
@@ -595,6 +617,7 @@ async def _slice_all(group_id, job, decisions, plates):
             plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
             queued, gate = await _queue_guarded(group_id, job["sender"], label, file_id, d["mapping"], plate_id)
             if queued:
+                queued_n += 1
                 lines.append(f'✅ „{label}" — Farben {nums}{note}')
             else:
                 lines.append(f'„{label}": {gate}')
@@ -602,12 +625,12 @@ async def _slice_all(group_id, job, decisions, plates):
             log.exception("slice/queue failed for plate %s", d.get("index"))
             lines.append(f'❌ „{label}" fehlgeschlagen')
     store.delete_job(job["id"])
-    head = "Alles in der Queue! " if n > 1 else ""
-    await signal_client.send_to_group(
-        group_id,
-        "\n".join(lines) + f'\n{head}Ich sag dir Bescheid, wenn er fertig ist. '
-        "(!progress · !liste · !abbrechen · !help)",
-    )
+    if queued_n:
+        head = "Alles in der Queue! " if queued_n > 1 else ""
+        tail = f'\n{head}Ich sag dir Bescheid, wenn er fertig ist. (!progress · !liste · !abbrechen · !help)'
+    else:
+        tail = "\nNichts eingereiht. (!help)"
+    await signal_client.send_to_group(group_id, "\n".join(lines) + tail)
 
 
 async def _reslice(library_file_id, required, ams, mapping, plate=None):

@@ -26,6 +26,15 @@ STATUS = {"ams": [{"tray": [
 ]}]}
 
 
+def test_color_name_lilac_not_grey():
+    # AE96D4 (Bambu "Lilac Purple") used to map to Hellgrau via RGB nearest-
+    # neighbour; a Flieder anchor must catch it while real greys stay grey.
+    assert colors.color_name("AE96D4") == "Flieder"
+    assert colors.color_name("AE96D4FF") == "Flieder"  # alpha tolerated
+    assert colors.color_name("C0C0C0") == "Hellgrau"
+    assert colors.color_name("FFFFFF") == "Weiß"
+
+
 def test_required_colors():
     rc = colors.required_colors(RESOLVED)
     assert [c["color"] for c in rc] == ["FFFFFF", "000000"]

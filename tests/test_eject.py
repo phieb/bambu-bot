@@ -26,9 +26,22 @@ def _fake_queue(calls):
 
 
 def _gcode(text):
+    data = text.encode() if isinstance(text, str) else text
     async def fake(_file_id):
-        return text
+        return data
     return fake
+
+
+def _gcode_zip(height):
+    """A .gcode.3mf-style zip blob with the plate gcode inside, like Bambuddy
+    returns for sliced library files."""
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Metadata/plate_1.gcode", _GCODE_H.format(h=height))
+        z.writestr("Metadata/project_settings.config", "{}")
+    return buf.getvalue()
 
 
 def test_eject_command_parsing():
@@ -65,11 +78,21 @@ def test_gate_off_queues_without_injection(tmp_path, monkeypatch):
     assert calls == [{"file_id": 7, "inject": False}]
 
 
+def test_max_z_height_reads_zip_and_plain():
+    # plain .gcode text
+    assert handlers._max_z_height(_GCODE_H.format(h=12.5).encode()) == 12.5
+    # .gcode.3mf zip container (the real library-file shape)
+    assert handlers._max_z_height(_gcode_zip(33.0)) == 33.0
+    # unreadable / missing header
+    assert handlers._max_z_height(b"no header here") is None
+
+
 def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     _setup(tmp_path, enabled=True)
     calls = []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
-    monkeypatch.setattr(handlers.bambuddy, "get_gcode", _gcode(_GCODE_H.format(h=42.0)))
+    # realistic: a sliced library file comes back as a .gcode.3mf zip
+    monkeypatch.setattr(handlers.bambuddy, "get_gcode", _gcode(_gcode_zip(42.0)))
 
     queued, _ = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0]))
     assert queued

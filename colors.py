@@ -11,7 +11,7 @@ _PALETTE = [
     ("Rot", "E0301E"), ("Orange", "F08000"), ("Gelb", "F0D000"),
     ("Grün", "20A020"), ("Dunkelgrün", "0A5A0A"), ("Türkis", "10B0A0"),
     ("Hellblau", "60B0E0"), ("Blau", "1050C0"), ("Dunkelblau", "0A1A6A"),
-    ("Lila", "8030C0"), ("Rosa", "F060A0"), ("Pink", "E0108A"),
+    ("Lila", "8030C0"), ("Flieder", "AE96D4"), ("Rosa", "F060A0"), ("Pink", "E0108A"),
     ("Braun", "7A4A20"), ("Beige", "D8C8A8"), ("Gold", "C0A030"),
     ("Silber", "C8C8D0"),
 ]
