@@ -78,6 +78,15 @@ def file_kind(filename):
     return "gcode" if ext.startswith(".gcode") else ext.lstrip(".")
 
 
+_THINGIVERSE = re.compile(r"thingiverse\.com/(?:thing:)?(\d{3,})", re.I)
+
+
+def thingiverse_id(message):
+    """The Thingiverse thing id from a link, or '' (e.g. .../thing:763622)."""
+    m = _THINGIVERSE.search(message or "")
+    return m.group(1) if m else ""
+
+
 def find_file_url(message):
     """First http(s) URL in the message that points directly at a model file,
     or '' (e.g. https://host/x/benchy.zip?dl=1)."""
@@ -134,6 +143,7 @@ def classify(envelope):
         "has_link": bool(url),
         "file_url": file_url,
         "has_file_url": bool(file_url),
+        "thingiverse_id": thingiverse_id(message),
         "model_files": files,
         "has_model_file": bool(files),
         "is_other_model": is_other_model,

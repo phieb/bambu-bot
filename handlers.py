@@ -20,6 +20,7 @@ import signal_client
 import slicing
 import store
 import swatch
+import thingiverse
 
 log = logging.getLogger("bambu-bot")
 
@@ -30,11 +31,14 @@ def _route(parsed):
     Group routes only fire for groups we created (registered in the store), so
     stray groups the bot's number sits in are ignored, not mishandled.
     """
+    tv = parsed["thingiverse_id"] and config.THINGIVERSE_TOKEN
     if parsed["is_dm"]:
         if parsed["has_link"]:
             return "dm_link"
         if parsed["has_file_url"]:
             return "dm_file_url"
+        if tv:
+            return "dm_thingiverse"
         if parsed["has_model_file"]:
             return "dm_file"
         if parsed["is_other_model"]:
@@ -47,6 +51,8 @@ def _route(parsed):
         return "group_link"
     if parsed["has_file_url"]:
         return "group_file_url"
+    if tv:
+        return "group_thingiverse"
     if parsed["has_model_file"]:
         return "group_file"
     if parsed["is_other_model"]:
@@ -108,6 +114,11 @@ async def handle(envelope):
             await _intake_url(group_id, parsed["sender"], parsed["file_url"])
         elif route == "group_file_url":
             await _intake_url(parsed["group_send_id"], parsed["sender"], parsed["file_url"])
+        elif route == "dm_thingiverse":
+            group_id = await _ensure_group(parsed["sender"])
+            await _intake_thingiverse(group_id, parsed["sender"], parsed["thingiverse_id"])
+        elif route == "group_thingiverse":
+            await _intake_thingiverse(parsed["group_send_id"], parsed["sender"], parsed["thingiverse_id"])
         elif route == "group_reply":
             await _reply(parsed["group_send_id"], parsed["message"])
         elif route == "group_cancel":
@@ -231,6 +242,26 @@ async def _intake_url(group_id, sender, url):
         await signal_client.send_to_group(group_id, "❌ Konnte die Datei vom Link nicht laden.")
         return
     await _process_model_bytes(group_id, sender, content, name, kind)
+
+
+async def _intake_thingiverse(group_id, sender, thing_id):
+    """A Thingiverse link: pull the thing's printable files via the API, bundle
+    them into a zip, then run the shared zip intake (multi-file → selection)."""
+    if await _busy(group_id):
+        return
+    await signal_client.send_to_group(group_id, f"🌐 Thingiverse-Modell {thing_id} wird geladen …")
+    try:
+        zip_bytes, name = await thingiverse.build_zip(thing_id)
+    except Exception:
+        log.exception("thingiverse fetch failed")
+        await signal_client.send_to_group(group_id, "❌ Konnte das Thingiverse-Modell nicht laden.")
+        return
+    if not zip_bytes:
+        await signal_client.send_to_group(
+            group_id, "❌ Das Thingiverse-Modell hat keine druckbaren Dateien (.stl/.3mf)."
+        )
+        return
+    await _process_model_bytes(group_id, sender, zip_bytes, name, "zip")
 
 
 async def _process_model_bytes(group_id, sender, content, name, kind):

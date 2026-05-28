@@ -13,3 +13,6 @@ PRINTER_MODEL = os.environ.get("BAMBUDDY_PRINTER_MODEL", "P1S")
 NOZZLE_DIAMETER = os.environ.get("BAMBUDDY_NOZZLE", "0.4")
 # Library folder that Signal-uploaded files land in (created if missing).
 SIGNAL_FOLDER_NAME = os.environ.get("BAMBU_SIGNAL_FOLDER", "signal")
+# Thingiverse app token (thingiverse.com/developers). Empty → Thingiverse links
+# get the generic "send me the file" reply instead of a direct download.
+THINGIVERSE_TOKEN = os.environ.get("THINGIVERSE_TOKEN", "")

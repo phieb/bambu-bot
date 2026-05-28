@@ -67,6 +67,17 @@ def test_filename_from_url():
     assert classify.filename_from_url("https://h/a/b/benchy.zip?x=1") == "benchy.zip"
 
 
+def test_thingiverse_id():
+    for msg, tid in (
+        ("https://www.thingiverse.com/thing:763622", "763622"),
+        ("guck https://thingiverse.com/thing:12345/files", "12345"),
+        ("kein link hier", ""),
+        ("https://makerworld.com/en/models/99", ""),
+    ):
+        p = classify.classify({"sourceNumber": "+1", "dataMessage": {"message": msg}})
+        assert p["thingiverse_id"] == tid, msg
+
+
 def _att(filename):
     return {"sourceNumber": "+43111", "dataMessage": {"attachments": [{"id": "abc123", "filename": filename}]}}
 
