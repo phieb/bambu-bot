@@ -544,7 +544,11 @@ async def _slice_all(group_id, job, decisions, plates):
             weight = await _slice_weight(file_id)
             if weight is not None and weight < _EMPTY_SLICE_G:
                 log.warning("empty slice for %s (%.2fg)", label, weight)
-                lines.append(f'⚠️ „{label}" kam leer raus (Objekt nicht aufs Bett platzierbar) — übersprungen.')
+                lines.append(
+                    f'⚠️ „{label}" — der Slicer hat keine Druckbahnen erzeugt (übersprungen).\n'
+                    "   Tipp: kleine/heikle Teile in Bambu Studio slicen und die .gcode/.3mf "
+                    "hier als Datei schicken."
+                )
                 continue
             # A successful re-slice yields a single-plate file; only the fallback
             # to the original multi-plate file still needs plate_id.
