@@ -97,7 +97,14 @@ async def list_queue():
 
 
 async def get_queue_item(item_id):
-    return await _get(f"/api/v1/queue/{int(item_id)}")
+    """A queue item by id, or None if it no longer exists (404). Bambuddy drops
+    items once they age out, so a missing item just means 'not trackable anymore'."""
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(config.BAMBUDDY_URL + f"/api/v1/queue/{int(item_id)}")
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
 
 
 async def delete_queue_item(item_id):

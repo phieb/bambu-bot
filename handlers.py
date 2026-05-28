@@ -476,7 +476,11 @@ async def poll_completions(interval=60):
 async def _check_completions():
     for job in store.queued_jobs_with_item():
         item = await bambuddy.get_queue_item(job["queue_item_id"])
-        status = (item or {}).get("status")
+        if item is None:
+            # Item aged out of Bambuddy — stop tracking, don't poll a 404 forever.
+            store.set_stage(job["id"], "done")
+            continue
+        status = item.get("status")
         if status == "completed":
             await signal_client.send_to_group(
                 job["group_id"],
