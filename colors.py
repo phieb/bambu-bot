@@ -216,6 +216,14 @@ HELP_TEXT = (
 
 _HINT = "💡 !progress · !liste · !go · !abbrechen · !help"
 
+OTHER_MODEL_TEXT = (
+    "🔗 Das sieht nach einem 3D-Modell-Link aus — automatisch einreihen kann ich "
+    "aber aktuell nur **MakerWorld**-Links.\n"
+    "Für Printables/Cults3D/Thingiverse & Co. fehlt mir die Auflösung. Vorerst "
+    "müsstest du das Modell manuell in Bambuddy importieren.\n"
+    "(Datei-Anhang-Import ist geplant — dann kannst du mir die .3mf direkt schicken.)"
+)
+
 
 def build_question(name, required, ams):
     color_lines = "\n".join(

@@ -4,6 +4,19 @@ import re
 
 _MW_FULL = re.compile(r"https?://(?:[\w.-]+\.)?makerworld\.com/\S+", re.I)
 _MW_BARE = re.compile(r"(?:^|\s)(makerworld\.com/\S+)", re.I)
+# Other 3D-model sources Bambuddy can't resolve from a URL. We recognize them
+# only to reply helpfully instead of silently ignoring the link. Keep this list
+# in sync with the dispatcher's hasLink regex so such links reach this bot.
+_OTHER_MODEL_HOSTS = (
+    "printables.com", "thingiverse.com", "cults3d.com",
+    "myminifactory.com", "thangs.com",
+)
+_OTHER_MODEL = re.compile(
+    r"(?:https?://)?(?:[\w.-]+\.)?(?:"
+    + "|".join(h.replace(".", r"\.") for h in _OTHER_MODEL_HOSTS)
+    + r")/\S+",
+    re.I,
+)
 _NUMBERED = re.compile(r"^\s*\d+(?:[\s,]+\d+)*\s*$")
 # Commands are prefixed with "!" so they never collide with color replies
 # ("3 1 2") or chatter. MakerWorld links and numbered replies stay prefix-free.
@@ -54,6 +67,9 @@ def classify(envelope):
     raw_group = (group_info.get("groupId") or group_info.get("id") or "") if group_info else ""
     internal, send_id = normalize_group(raw_group)
     url = find_url(message)
+    # An "other" model link only counts when it isn't a MakerWorld link (those
+    # take the full flow); presence is enough to trigger the helpful reply.
+    is_other_model = bool(_OTHER_MODEL.search(message)) and not url
     return {
         "sender": sender,
         "message": message,
@@ -62,6 +78,7 @@ def classify(envelope):
         "group_send_id": send_id,
         "url": url,
         "has_link": bool(url),
+        "is_other_model": is_other_model,
         "is_numbered": bool(_NUMBERED.match(message)),
         "is_cancel": bool(_CANCEL.match(message)),
         "is_list": bool(_LIST.match(message)),

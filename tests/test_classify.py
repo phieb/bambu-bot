@@ -23,6 +23,29 @@ def test_dm_no_link():
     assert p["is_dm"] and not p["has_link"] and not p["is_numbered"]
 
 
+def test_other_model_link_recognized():
+    for msg in (
+        "https://www.printables.com/model/123-thing",
+        "guck mal cults3d.com/de/modell/456",
+        "https://thingiverse.com/thing:789",
+        "myminifactory.com/object/3d-print-1",
+        "thangs.com/designer/x/3d-model/2",
+    ):
+        p = classify.classify({"sourceNumber": "+43111", "dataMessage": {"message": msg}})
+        assert p["is_other_model"], msg
+        assert not p["has_link"], msg
+
+
+def test_makerworld_is_not_other_model():
+    p = classify.classify({"sourceNumber": "+43111", "dataMessage": {"message": "https://makerworld.com/en/models/123"}})
+    assert p["has_link"] and not p["is_other_model"]
+
+
+def test_plain_text_is_not_other_model():
+    p = classify.classify({"sourceNumber": "+43111", "dataMessage": {"message": "hallo, wie gehts?"}})
+    assert not p["is_other_model"]
+
+
 def test_group_numbered_reply():
     env = {"sourceNumber": "+43111", "dataMessage": {"message": "3 1", "groupInfo": {"groupId": INTERNAL}}}
     p = classify.classify(env)

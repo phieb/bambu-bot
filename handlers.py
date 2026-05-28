@@ -31,12 +31,18 @@ def _route(parsed):
     stray groups the bot's number sits in are ignored, not mishandled.
     """
     if parsed["is_dm"]:
-        return "dm_link" if parsed["has_link"] else "ignore"
+        if parsed["has_link"]:
+            return "dm_link"
+        if parsed["is_other_model"]:
+            return "dm_other_model"
+        return "ignore"
     gid = parsed["group_send_id"]
     if not gid or not store.get_group_by_group_id(gid):
         return "ignore"
     if parsed["has_link"]:
         return "group_link"
+    if parsed["is_other_model"]:
+        return "group_other_model"
     if parsed["is_help"]:
         return "group_help"
     if parsed["is_cancel"]:
@@ -65,6 +71,10 @@ async def handle(envelope):
             await _intake(group_id, parsed["sender"], parsed["url"])
         elif route == "group_link":
             await _intake(parsed["group_send_id"], parsed["sender"], parsed["url"])
+        elif route == "dm_other_model":
+            await signal_client.send_to_number(parsed["sender"], colors.OTHER_MODEL_TEXT)
+        elif route == "group_other_model":
+            await signal_client.send_to_group(parsed["group_send_id"], colors.OTHER_MODEL_TEXT)
         elif route == "group_reply":
             await _reply(parsed["group_send_id"], parsed["message"])
         elif route == "group_cancel":
