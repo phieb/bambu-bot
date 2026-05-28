@@ -312,7 +312,8 @@ async def _reply(group_id, message):
     job = store.active_job(group_id)
     if not job:
         await signal_client.send_to_group(
-            group_id, "Es gibt gerade keinen offenen Job. Schick mir einen MakerWorld-Link."
+            group_id, "Es gibt gerade keinen offenen Job. Schick mir ein Modell — "
+            "MakerWorld-Link oder eine Datei (.3mf/.gcode/.stl/.zip)."
         )
         return
     stage = job["stage"]
@@ -381,8 +382,9 @@ def _plate_label(model_name, plate, multi):
 
 
 async def _config(group_id, job, message):
-    """Color reply for the current plate: slice it, queue it, then move on to the
-    next selected plate (if any)."""
+    """Record the color choice for the current plate. Ask the next plate's colors
+    if any are still pending; once every selected plate has its colors, slice +
+    queue them all at once (collect-then-slice for nicer UX)."""
     required = json.loads(job["required_colors"] or "[]")
     ams = json.loads(job["ams_snapshot"] or "[]")
     ok, mapping, error = colors.parse_reply(message, required, ams)
@@ -393,47 +395,74 @@ async def _config(group_id, job, message):
         return  # a duplicate/concurrent reply already handled it
     job_id = job["id"]
     try:
-        lfid = job["library_file_id"]
-        plate_index = job["plate_index"]
-        pending = json.loads(job["pending_plates"] or "[]")
         plates = json.loads(job["plates"] or "[]")
-        multi = bool(plate_index) and len(plates) > 1
+        pending = json.loads(job["pending_plates"] or "[]")
+        decisions = json.loads(job["decisions"] or "[]")
+        plate_index = job["plate_index"]
         plate = next((p for p in plates if p.get("index") == plate_index), {"index": plate_index})
-        label = _plate_label(job["model_name"], plate, multi)
-        item_lfid, src_plate = _plate_source(plate, lfid)
-        # A zip item is its own single-plate file; only a real multi-plate file
-        # (no per-item lfid) needs plate_id on the fallback path.
-        within_file_multi = plate.get("library_file_id") is None and len(plates) > 1
-        await signal_client.send_to_group(
-            group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
-        )
-        file_id, note = await _reslice(item_lfid, required, ams, mapping, src_plate)
-        # A successful re-slice yields a single-plate file (plate 1); only when we
-        # fall back to the original multi-plate file do we still need plate_id.
-        plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
-        resp = await bambuddy.queue(file_id, mapping, plate_id=plate_id)
-        item_id = resp.get("id") if isinstance(resp, dict) else None
-        store.add_queued(group_id, job["sender"], label, file_id, item_id)
+        label = _plate_label(job["model_name"], plate, len(plates) > 1)
+        decisions.append({"index": plate_index, "mapping": mapping, "required": required, "ams": ams})
         nums = " ".join(str(m + 1) for m in mapping)
         if pending:
-            store.update_dialog(job_id, pending_plates=json.dumps(pending[1:]))
+            store.update_dialog(job_id, decisions=json.dumps(decisions),
+                                pending_plates=json.dumps(pending[1:]))
             await signal_client.send_to_group(
-                group_id, f'✅ „{label}" ist in der Queue! Farben: {nums}{note}\n➡️ Weiter mit dem nächsten Plate:'
+                group_id, f'👍 Farben für „{label}" notiert: {nums}\n➡️ Weiter mit dem nächsten Plate:'
             )
             next_idx = pending[0]
             next_plate = next((p for p in plates if p.get("index") == next_idx), {"index": next_idx, "filaments": []})
-            await _ask_colors(group_id, job_id, lfid, _plate_label(job["model_name"], next_plate, True), next_plate)
+            await _ask_colors(group_id, job_id, job["library_file_id"],
+                              _plate_label(job["model_name"], next_plate, True), next_plate)
         else:
-            store.delete_job(job_id)
-            await signal_client.send_to_group(
-                group_id,
-                f'✅ „{label}" ist in der Queue! Farben: {nums}{note}\n'
-                "Ich sag dir Bescheid, wenn er fertig ist. (!progress · !liste · !abbrechen · !help)",
-            )
+            store.update_dialog(job_id, decisions=json.dumps(decisions))
+            await _slice_all(group_id, job, decisions, plates)
     except Exception:
-        log.exception("config/queue failed")
+        log.exception("config failed")
         store.discard_dialog(job_id)
-        await signal_client.send_to_group(group_id, "❌ Konnte den Druck nicht einreihen.")
+        await signal_client.send_to_group(group_id, "❌ Da ist was schiefgelaufen.")
+
+
+async def _slice_all(group_id, job, decisions, plates):
+    """Slice + queue every collected plate decision in order, then report once.
+    Per-plate errors are isolated so one bad plate doesn't lose the others."""
+    multi = len(plates) > 1
+    n = len(decisions)
+    if n > 1:
+        await signal_client.send_to_group(
+            group_id, f'🔧 Alle Farben da — ich slice & reihe jetzt {n} Plates ein … (kurz Geduld)'
+        )
+    lines = []
+    for d in decisions:
+        plate = next((p for p in plates if p.get("index") == d["index"]), {"index": d["index"]})
+        label = _plate_label(job["model_name"], plate, multi)
+        item_lfid, src_plate = _plate_source(plate, job["library_file_id"])
+        # A zip item is its own single-plate file; only a real multi-plate file
+        # (no per-item lfid) needs plate_id on the fallback path.
+        within_file_multi = plate.get("library_file_id") is None and multi
+        nums = " ".join(str(m + 1) for m in d["mapping"])
+        try:
+            if n == 1:
+                await signal_client.send_to_group(
+                    group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
+                )
+            file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
+            # A successful re-slice yields a single-plate file; only the fallback
+            # to the original multi-plate file still needs plate_id.
+            plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
+            resp = await bambuddy.queue(file_id, d["mapping"], plate_id=plate_id)
+            item_id = resp.get("id") if isinstance(resp, dict) else None
+            store.add_queued(group_id, job["sender"], label, file_id, item_id)
+            lines.append(f'✅ „{label}" — Farben {nums}{note}')
+        except Exception:
+            log.exception("slice/queue failed for plate %s", d.get("index"))
+            lines.append(f'❌ „{label}" fehlgeschlagen')
+    store.delete_job(job["id"])
+    head = "Alles in der Queue! " if n > 1 else ""
+    await signal_client.send_to_group(
+        group_id,
+        "\n".join(lines) + f'\n{head}Ich sag dir Bescheid, wenn er fertig ist. '
+        "(!progress · !liste · !abbrechen · !help)",
+    )
 
 
 async def _reslice(library_file_id, required, ams, mapping, plate=None):
@@ -507,7 +536,7 @@ async def _cancel(group_id):
         await signal_client.send_to_group(
             group_id,
             f'🗑️ Abgebrochen: „{dialog["model_name"]}" verworfen. '
-            "Schick mir einen neuen MakerWorld-Link, wenn du willst.",
+            "Schick mir ein neues Modell — Link oder Datei —, wenn du willst.",
         )
         return
     job = store.last_queued_job(group_id)

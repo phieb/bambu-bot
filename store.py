@@ -18,7 +18,7 @@ _TERMINAL = ("queued", "done", "failed", "cancelled")
 _DIALOG_COLS = {
     "model_id", "library_file_id", "model_name", "required_colors", "ams_snapshot",
     "stage", "queue_item_id", "profile_id", "profiles", "plates", "pending_plates",
-    "plate_index", "plate_name",
+    "plate_index", "plate_name", "decisions",
 }
 
 
@@ -63,6 +63,7 @@ def init_db():
             ("pending_plates", "TEXT"),
             ("plate_index", "INTEGER"),
             ("plate_name", "TEXT"),
+            ("decisions", "TEXT"),
         ):
             if name not in cols:
                 c.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
