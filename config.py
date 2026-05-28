@@ -11,6 +11,8 @@ GROUP_NAME = os.environ.get("BAMBU_GROUP_NAME", "🖨️ Bambu Print Queue")
 # X1C). Short code as it appears in slicer preset names (@BBL <model>).
 PRINTER_MODEL = os.environ.get("BAMBUDDY_PRINTER_MODEL", "P1S")
 NOZZLE_DIAMETER = os.environ.get("BAMBUDDY_NOZZLE", "0.4")
+# Bed size (mm, square) — used to center raw STLs before slicing. P1S/X1 = 256.
+BED_SIZE_MM = float(os.environ.get("BAMBUDDY_BED_SIZE_MM", "256"))
 # Library folder that Signal-uploaded files land in (created if missing).
 SIGNAL_FOLDER_NAME = os.environ.get("BAMBU_SIGNAL_FOLDER", "signal")
 # Thingiverse app token (thingiverse.com/developers). Empty → Thingiverse links

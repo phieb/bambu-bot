@@ -18,6 +18,7 @@ import colors
 import config
 import signal_client
 import slicing
+import stl
 import store
 import swatch
 import thingiverse
@@ -272,6 +273,8 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
     try:
         folder_id = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
         if kind == "zip":
+            # Arrange every STL inside the zip onto the bed before extraction.
+            content = await asyncio.to_thread(stl.arrange_zip, content)
             result = await bambuddy.extract_zip(content, name, folder_id)
             items = [
                 {"filename": f.get("filename") or f"Datei {i}", "file_id": f["file_id"]}
@@ -283,6 +286,10 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
                 return
             await _start_zip(group_id, job_id, name, items)
             return
+        if kind == "stl":
+            # Center on the bed + drop to Z=0 so the slicer doesn't drop an
+            # off-bed object (→ empty print).
+            content = await asyncio.to_thread(stl.arrange, content)
         uploaded = await bambuddy.upload_library_file(content, name, folder_id)
         lfid = uploaded["id"]
         if kind == "gcode":
@@ -491,6 +498,19 @@ async def _config(group_id, job, message):
         await signal_client.send_to_group(group_id, "❌ Da ist was schiefgelaufen.")
 
 
+_EMPTY_SLICE_G = 0.5  # purge line alone is ~0.4g → below this means no object sliced
+
+
+async def _slice_weight(file_id):
+    """Total filament grams of a sliced file's plates, or None if unknown."""
+    try:
+        data = await bambuddy.list_plates(file_id)
+        plates = (data or {}).get("plates") or []
+        return sum((p.get("filament_used_grams") or 0) for p in plates)
+    except Exception:
+        return None
+
+
 async def _slice_all(group_id, job, decisions, plates):
     """Slice + queue every collected plate decision in order, then report once.
     Per-plate errors are isolated so one bad plate doesn't lose the others."""
@@ -515,6 +535,13 @@ async def _slice_all(group_id, job, decisions, plates):
                     group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
                 )
             file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
+            # Safety net: a slice with no object (off-bed / degenerate mesh) yields
+            # only the purge line (~0.4g) → don't queue a blank "successful" print.
+            weight = await _slice_weight(file_id)
+            if weight is not None and weight < _EMPTY_SLICE_G:
+                log.warning("empty slice for %s (%.2fg)", label, weight)
+                lines.append(f'⚠️ „{label}" kam leer raus (Objekt nicht aufs Bett platzierbar) — übersprungen.')
+                continue
             # A successful re-slice yields a single-plate file; only the fallback
             # to the original multi-plate file still needs plate_id.
             plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
