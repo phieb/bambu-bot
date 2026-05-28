@@ -72,7 +72,9 @@ async def handle(envelope):
         elif route == "group_link":
             await _intake(parsed["group_send_id"], parsed["sender"], parsed["url"])
         elif route == "dm_other_model":
-            await signal_client.send_to_number(parsed["sender"], colors.OTHER_MODEL_TEXT)
+            # Reply in the person's group, never in the DM itself.
+            group_id = await _ensure_group(parsed["sender"])
+            await signal_client.send_to_group(group_id, colors.OTHER_MODEL_TEXT)
         elif route == "group_other_model":
             await signal_client.send_to_group(parsed["group_send_id"], colors.OTHER_MODEL_TEXT)
         elif route == "group_reply":

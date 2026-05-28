@@ -22,10 +22,6 @@ async def send_to_group(group_id, message, attachments=None):
     return await _send([group_id], message, attachments)
 
 
-async def send_to_number(number, message):
-    return await _send([number], message)
-
-
 async def fetch_bytes(url):
     """Download a URL → raw bytes (e.g. a model thumbnail), or None on any
     failure so a missing/broken image never blocks the color question."""
