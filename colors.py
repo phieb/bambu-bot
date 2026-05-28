@@ -217,6 +217,8 @@ HELP_TEXT = (
 
 _HINT = "💡 !progress · !liste · !go · !abbrechen · !help"
 
+UNKNOWN_TEXT = "🤔 Da kenn ich mich nicht aus. Das kann ich:\n\n" + HELP_TEXT
+
 OTHER_MODEL_TEXT = (
     "🔗 Das sieht nach einem 3D-Modell-Link aus — Links automatisch auflösen kann "
     "ich aber nur bei **MakerWorld**.\n"

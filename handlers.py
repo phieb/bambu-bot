@@ -59,6 +59,10 @@ def _route(parsed):
         return "group_go"
     if parsed["is_numbered"]:
         return "group_reply"
+    # Unrecognized *text* in our own group → friendly "didn't get that" + help.
+    # Contentless events (photos, reactions) stay claimed but get no reply.
+    if parsed["message"]:
+        return "group_unknown"
     return "ignore"
 
 
@@ -107,6 +111,8 @@ async def handle(envelope):
             await _go(parsed["group_send_id"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
+        elif route == "group_unknown":
+            await signal_client.send_to_group(parsed["group_send_id"], colors.UNKNOWN_TEXT)
     except Exception:
         log.exception("handle failed (route=%s)", route)
 
