@@ -46,6 +46,27 @@ def test_plain_text_is_not_other_model():
     assert not p["is_other_model"]
 
 
+def test_direct_file_url_detected():
+    for msg, kind in (
+        ("https://files.example.com/a/benchy.zip", "zip"),
+        ("schau https://host.tld/x/part.STL?dl=1 an", "stl"),
+        ("https://cdn.foo/y/model.3mf#frag", "3mf"),
+    ):
+        p = classify.classify({"sourceNumber": "+1", "dataMessage": {"message": msg}})
+        assert p["has_file_url"], msg
+        assert classify.file_kind(classify.filename_from_url(p["file_url"])) == kind, msg
+
+
+def test_makerworld_and_model_pages_are_not_file_urls():
+    for msg in ("https://makerworld.com/en/models/123", "https://www.printables.com/model/9-foo"):
+        p = classify.classify({"sourceNumber": "+1", "dataMessage": {"message": msg}})
+        assert not p["has_file_url"], msg
+
+
+def test_filename_from_url():
+    assert classify.filename_from_url("https://h/a/b/benchy.zip?x=1") == "benchy.zip"
+
+
 def _att(filename):
     return {"sourceNumber": "+43111", "dataMessage": {"attachments": [{"id": "abc123", "filename": filename}]}}
 

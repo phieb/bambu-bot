@@ -58,9 +58,37 @@ def find_url(message):
     return url
 
 
-# Attachment file types we can take into Bambuddy. Longest suffix first so
+# Model file types we can take into Bambuddy. Longest suffix first so
 # ".gcode.3mf" is classified as gcode (already sliced) rather than 3mf.
 _MODEL_EXTS = (".gcode.3mf", ".gcode", ".3mf", ".stl", ".zip")
+# A bare http(s) URL whose path ends in a model extension (query string ignored).
+_FILE_URL = re.compile(
+    r"https?://\S+?(?:" + "|".join(e.replace(".", r"\.") for e in _MODEL_EXTS) + r")(?=$|[?#\s])",
+    re.I,
+)
+
+
+def file_kind(filename):
+    """Map a filename/path to a kind ('gcode'|'3mf'|'stl'|'zip') or '' if not a
+    model file. '.gcode.3mf' counts as gcode (already sliced)."""
+    low = (filename or "").lower()
+    ext = next((e for e in _MODEL_EXTS if low.endswith(e)), "")
+    if not ext:
+        return ""
+    return "gcode" if ext.startswith(".gcode") else ext.lstrip(".")
+
+
+def find_file_url(message):
+    """First http(s) URL in the message that points directly at a model file,
+    or '' (e.g. https://host/x/benchy.zip?dl=1)."""
+    m = _FILE_URL.search(message or "")
+    return m.group(0) if m else ""
+
+
+def filename_from_url(url):
+    """Last path segment of a URL (query/fragment stripped), e.g. 'benchy.zip'."""
+    tail = re.split(r"[?#]", url, 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    return tail or "modell"
 
 
 def model_files(dm):
@@ -73,11 +101,9 @@ def model_files(dm):
         if not isinstance(att, dict):
             continue
         name = (att.get("filename") or "").strip()
-        low = name.lower()
-        ext = next((e for e in _MODEL_EXTS if low.endswith(e)), "")
-        if not ext:
+        kind = file_kind(name)
+        if not kind:
             continue
-        kind = "gcode" if ext.startswith(".gcode") else ext.lstrip(".")
         att_id = att.get("id") or att.get("attachment") or att.get("contentType")
         if att_id:
             out.append({"id": att_id, "filename": name, "kind": kind})
@@ -93,10 +119,11 @@ def classify(envelope):
     raw_group = (group_info.get("groupId") or group_info.get("id") or "") if group_info else ""
     internal, send_id = normalize_group(raw_group)
     url = find_url(message)
+    file_url = find_file_url(message)
     files = model_files(dm)
-    # An "other" model link only counts when it isn't a MakerWorld link (those
-    # take the full flow); presence is enough to trigger the helpful reply.
-    is_other_model = bool(_OTHER_MODEL.search(message)) and not url
+    # An "other" model link only counts when it isn't a MakerWorld link nor a
+    # direct file URL (those take a real flow); presence triggers the help reply.
+    is_other_model = bool(_OTHER_MODEL.search(message)) and not url and not file_url
     return {
         "sender": sender,
         "message": message,
@@ -105,6 +132,8 @@ def classify(envelope):
         "group_send_id": send_id,
         "url": url,
         "has_link": bool(url),
+        "file_url": file_url,
+        "has_file_url": bool(file_url),
         "model_files": files,
         "has_model_file": bool(files),
         "is_other_model": is_other_model,

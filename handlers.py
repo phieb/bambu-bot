@@ -33,6 +33,8 @@ def _route(parsed):
     if parsed["is_dm"]:
         if parsed["has_link"]:
             return "dm_link"
+        if parsed["has_file_url"]:
+            return "dm_file_url"
         if parsed["has_model_file"]:
             return "dm_file"
         if parsed["is_other_model"]:
@@ -43,6 +45,8 @@ def _route(parsed):
         return "ignore"
     if parsed["has_link"]:
         return "group_link"
+    if parsed["has_file_url"]:
+        return "group_file_url"
     if parsed["has_model_file"]:
         return "group_file"
     if parsed["is_other_model"]:
@@ -99,6 +103,11 @@ async def handle(envelope):
             await _intake_file(group_id, parsed["sender"], parsed["model_files"][0])
         elif route == "group_file":
             await _intake_file(parsed["group_send_id"], parsed["sender"], parsed["model_files"][0])
+        elif route == "dm_file_url":
+            group_id = await _ensure_group(parsed["sender"])
+            await _intake_url(group_id, parsed["sender"], parsed["file_url"])
+        elif route == "group_file_url":
+            await _intake_url(parsed["group_send_id"], parsed["sender"], parsed["file_url"])
         elif route == "group_reply":
             await _reply(parsed["group_send_id"], parsed["message"])
         elif route == "group_cancel":
@@ -185,24 +194,48 @@ async def _from_library_file(group_id, job_id, name, lfid):
     await _ask_colors(group_id, job_id, lfid, name, plate)
 
 
-async def _intake_file(group_id, sender, file_meta):
-    """A Signal-uploaded model file: fetch it, upload to the Signal library
-    folder, then run the same plate/color flow. A pre-sliced .gcode is queued
-    straight away (no colors)."""
+async def _busy(group_id):
+    """True (and tells the group) if a dialog is already open — one job at a time."""
     if store.active_job(group_id):
         await signal_client.send_to_group(
             group_id,
             "⏳ Du hast noch einen offenen Job — bitte konfigurier den zuerst, "
-            "dann schick die nächste Datei.",
+            "dann schick das nächste Modell.",
         )
+        return True
+    return False
+
+
+async def _intake_file(group_id, sender, file_meta):
+    """A Signal-uploaded model file: fetch its bytes, then run the shared intake."""
+    if await _busy(group_id):
         return
     name = file_meta["filename"]
-    kind = file_meta["kind"]
     await signal_client.send_to_group(group_id, f'⬆️ „{name}" wird verarbeitet …')
     content = await signal_client.fetch_attachment(file_meta["id"])
     if not content:
         await signal_client.send_to_group(group_id, "❌ Konnte die Datei nicht von Signal laden.")
         return
+    await _process_model_bytes(group_id, sender, content, name, file_meta["kind"])
+
+
+async def _intake_url(group_id, sender, url):
+    """A direct link to a model file: download it, then run the shared intake."""
+    if await _busy(group_id):
+        return
+    name = classify.filename_from_url(url)
+    kind = classify.file_kind(name)
+    await signal_client.send_to_group(group_id, f'🌐 „{name}" wird vom Link geladen …')
+    content = await signal_client.fetch_bytes(url)
+    if not content:
+        await signal_client.send_to_group(group_id, "❌ Konnte die Datei vom Link nicht laden.")
+        return
+    await _process_model_bytes(group_id, sender, content, name, kind)
+
+
+async def _process_model_bytes(group_id, sender, content, name, kind):
+    """Upload the bytes into the Signal library folder and start the right flow:
+    .zip → extract into selectable items; .gcode → queue as-is; else → plates."""
     job_id = store.create_dialog(group_id, sender, None, name)
     store.update_dialog(job_id, stage="configuring")
     try:
