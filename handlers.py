@@ -502,19 +502,6 @@ async def _config(group_id, job, message):
         await signal_client.send_to_group(group_id, "❌ Da ist was schiefgelaufen.")
 
 
-_EMPTY_SLICE_G = 0.5  # purge line alone is ~0.4g → below this means no object sliced
-
-
-async def _slice_weight(file_id):
-    """Total filament grams of a sliced file's plates, or None if unknown."""
-    try:
-        data = await bambuddy.list_plates(file_id)
-        plates = (data or {}).get("plates") or []
-        return sum((p.get("filament_used_grams") or 0) for p in plates)
-    except Exception:
-        return None
-
-
 async def _slice_all(group_id, job, decisions, plates):
     """Slice + queue every collected plate decision in order, then report once.
     Per-plate errors are isolated so one bad plate doesn't lose the others."""
@@ -539,17 +526,6 @@ async def _slice_all(group_id, job, decisions, plates):
                     group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
                 )
             file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
-            # Safety net: a slice with no object (off-bed / degenerate mesh) yields
-            # only the purge line (~0.4g) → don't queue a blank "successful" print.
-            weight = await _slice_weight(file_id)
-            if weight is not None and weight < _EMPTY_SLICE_G:
-                log.warning("empty slice for %s (%.2fg)", label, weight)
-                lines.append(
-                    f'⚠️ „{label}" — der Slicer hat keine Druckbahnen erzeugt (übersprungen).\n'
-                    "   Tipp: kleine/heikle Teile in Bambu Studio slicen und die .gcode/.3mf "
-                    "hier als Datei schicken."
-                )
-                continue
             # A successful re-slice yields a single-plate file; only the fallback
             # to the original multi-plate file still needs plate_id.
             plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
