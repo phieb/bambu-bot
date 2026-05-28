@@ -60,13 +60,14 @@ def find_url(message):
 
 # Attachment file types we can take into Bambuddy. Longest suffix first so
 # ".gcode.3mf" is classified as gcode (already sliced) rather than 3mf.
-_MODEL_EXTS = (".gcode.3mf", ".gcode", ".3mf", ".stl")
+_MODEL_EXTS = (".gcode.3mf", ".gcode", ".3mf", ".stl", ".zip")
 
 
 def model_files(dm):
     """Model-file attachments of a dataMessage as
-    [{id, filename, kind}] where kind is 'gcode' | '3mf' | 'stl'. Non-model
-    attachments (photos, …) are ignored so stray group media never triggers."""
+    [{id, filename, kind}] where kind is 'gcode' | '3mf' | 'stl' | 'zip'. Non-
+    model attachments (photos, …) are ignored so stray group media never
+    triggers."""
     out = []
     for att in dm.get("attachments") or []:
         if not isinstance(att, dict):

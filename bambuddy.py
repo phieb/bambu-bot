@@ -94,6 +94,18 @@ async def upload_library_file(content, filename, folder_id=None):
         return r.json()
 
 
+async def extract_zip(content, filename, folder_id=None):
+    """Upload a .zip and extract its printable files into the library →
+    {extracted, files:[{filename, file_id}], errors}. Each extracted STL/3MF
+    becomes its own library file."""
+    params = {} if folder_id is None else {"folder_id": int(folder_id)}
+    files = {"file": (filename, content, "application/zip")}
+    async with httpx.AsyncClient(timeout=180) as c:
+        r = await c.post(config.BAMBUDDY_URL + "/api/v1/library/files/extract-zip", params=params, files=files)
+        r.raise_for_status()
+        return r.json()
+
+
 async def list_plates(library_file_id):
     """Plates of a (possibly multi-plate) library file:
     {is_multi_plate, plates:[{index, name, filaments:[{type,color,...}], ...}]}."""

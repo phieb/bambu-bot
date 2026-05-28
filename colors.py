@@ -204,7 +204,7 @@ def ams_snapshot(status):
 HELP_TEXT = (
     "🤖 Befehle (einfach hier reinschreiben):\n"
     "• MakerWorld-Link → neuer Druckauftrag\n"
-    "• Datei-Anhang (.3mf/.gcode/.stl) → direkt drucken\n"
+    "• Datei-Anhang (.3mf/.gcode/.stl/.zip) → direkt drucken\n"
     "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
     "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
     "• !liste → zeigt die Druck-Queue\n"

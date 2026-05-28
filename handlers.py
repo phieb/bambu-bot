@@ -180,7 +180,7 @@ async def _from_library_file(group_id, job_id, name, lfid):
         store.update_dialog(job_id, stage="awaiting_plate")
         await _send_plate_question(group_id, lfid, name, plates)
         return
-    plate = plates[0] if plates else {"index": 1, "name": "", "filaments": [{"type": "PLA", "color": ""}]}
+    plate = plates[0] if plates else {"index": 1, "name": "", "filaments": [{"type": "", "color": ""}]}
     store.update_dialog(job_id, pending_plates=json.dumps([]))
     await _ask_colors(group_id, job_id, lfid, name, plate)
 
@@ -197,23 +197,31 @@ async def _intake_file(group_id, sender, file_meta):
         )
         return
     name = file_meta["filename"]
-    await signal_client.send_to_group(group_id, f'⬆️ „{name}" wird hochgeladen …')
+    kind = file_meta["kind"]
+    await signal_client.send_to_group(group_id, f'⬆️ „{name}" wird verarbeitet …')
     content = await signal_client.fetch_attachment(file_meta["id"])
     if not content:
         await signal_client.send_to_group(group_id, "❌ Konnte die Datei nicht von Signal laden.")
         return
-    try:
-        folder_id = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
-        uploaded = await bambuddy.upload_library_file(content, name, folder_id)
-        lfid = uploaded["id"]
-    except Exception:
-        log.exception("upload failed")
-        await signal_client.send_to_group(group_id, "❌ Upload nach Bambuddy fehlgeschlagen.")
-        return
     job_id = store.create_dialog(group_id, sender, None, name)
     store.update_dialog(job_id, stage="configuring")
     try:
-        if file_meta["kind"] == "gcode":
+        folder_id = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
+        if kind == "zip":
+            result = await bambuddy.extract_zip(content, name, folder_id)
+            items = [
+                {"filename": f.get("filename") or f"Datei {i}", "file_id": f["file_id"]}
+                for i, f in enumerate(result.get("files") or [], 1)
+            ]
+            if not items:
+                store.discard_dialog(job_id)
+                await signal_client.send_to_group(group_id, "❌ Im ZIP waren keine druckbaren Dateien.")
+                return
+            await _start_zip(group_id, job_id, name, items)
+            return
+        uploaded = await bambuddy.upload_library_file(content, name, folder_id)
+        lfid = uploaded["id"]
+        if kind == "gcode":
             # Already sliced for a machine — queue as-is, no color dialog.
             resp = await bambuddy.queue(lfid, [], plate_id=None)
             item_id = resp.get("id") if isinstance(resp, dict) else None
@@ -231,9 +239,35 @@ async def _intake_file(group_id, sender, file_meta):
         await signal_client.send_to_group(group_id, "❌ Da ist beim Einreihen was schiefgelaufen.")
 
 
+async def _start_zip(group_id, job_id, name, items):
+    """Each extracted file becomes one selectable single-plate item carrying its
+    own library_file_id — so a multi-STL zip behaves like a multi-plate 3MF."""
+    plates = [
+        {"index": i, "name": it["filename"], "filaments": [{"type": "", "color": ""}],
+         "library_file_id": it["file_id"], "src_plate": 1}
+        for i, it in enumerate(items, 1)
+    ]
+    store.update_dialog(job_id, plates=json.dumps(plates))
+    if len(plates) > 1:
+        store.update_dialog(job_id, stage="awaiting_plate")
+        await _send_plate_question(group_id, None, name, plates)
+        return
+    store.update_dialog(job_id, pending_plates=json.dumps([]))
+    p = plates[0]
+    await _ask_colors(group_id, job_id, p["library_file_id"], _plate_label(name, p, multi=True), p)
+
+
+def _plate_source(plate, job_lfid):
+    """(library_file_id, in-file plate index) for a selectable item. A zip item
+    carries its own single-plate library_file_id (src_plate 1); a normal plate
+    lives inside the job's library file at its own index."""
+    return plate.get("library_file_id") or job_lfid, plate.get("src_plate", plate.get("index"))
+
+
 async def _send_plate_question(group_id, lfid, name, plates):
     text = colors.build_plate_question(name, plates)
-    raws = await asyncio.gather(*(bambuddy.plate_thumbnail(lfid, p["index"]) for p in plates))
+    srcs = [_plate_source(p, lfid) for p in plates]
+    raws = await asyncio.gather(*(bambuddy.plate_thumbnail(l, idx) for l, idx in srcs))
     shrunk = await asyncio.gather(*(asyncio.to_thread(swatch.shrink_image, r) for r in raws if r))
     attachments = [s for s in shrunk if s]
     await signal_client.send_to_group(group_id, text, attachments=attachments or None)
@@ -251,8 +285,9 @@ async def _ask_colors(group_id, job_id, lfid, label, plate):
         plate_index=plate.get("index"), plate_name=plate.get("name") or "",
         required_colors=json.dumps(required), ams_snapshot=json.dumps(ams),
     )
+    src_lfid, src_idx = _plate_source(plate, lfid)
     raw, chart = await asyncio.gather(
-        bambuddy.plate_thumbnail(lfid, plate.get("index")),
+        bambuddy.plate_thumbnail(src_lfid, src_idx),
         asyncio.to_thread(swatch.build, label, required, ams),
     )
     thumb = await asyncio.to_thread(swatch.shrink_image, raw) if raw else None
@@ -359,13 +394,17 @@ async def _config(group_id, job, message):
         multi = bool(plate_index) and len(plates) > 1
         plate = next((p for p in plates if p.get("index") == plate_index), {"index": plate_index})
         label = _plate_label(job["model_name"], plate, multi)
+        item_lfid, src_plate = _plate_source(plate, lfid)
+        # A zip item is its own single-plate file; only a real multi-plate file
+        # (no per-item lfid) needs plate_id on the fallback path.
+        within_file_multi = plate.get("library_file_id") is None and len(plates) > 1
         await signal_client.send_to_group(
             group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
         )
-        file_id, note = await _reslice(lfid, required, ams, mapping, plate_index)
+        file_id, note = await _reslice(item_lfid, required, ams, mapping, src_plate)
         # A successful re-slice yields a single-plate file (plate 1); only when we
         # fall back to the original multi-plate file do we still need plate_id.
-        plate_id = plate_index if (file_id == lfid and multi) else None
+        plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
         resp = await bambuddy.queue(file_id, mapping, plate_id=plate_id)
         item_id = resp.get("id") if isinstance(resp, dict) else None
         store.add_queued(group_id, job["sender"], label, file_id, item_id)

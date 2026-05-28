@@ -52,7 +52,8 @@ def _att(filename):
 
 def test_model_file_attachment_recognized():
     for fn, kind in (("benchy.3mf", "3mf"), ("part.STL", "stl"),
-                     ("plate.gcode", "gcode"), ("job.gcode.3mf", "gcode")):
+                     ("plate.gcode", "gcode"), ("job.gcode.3mf", "gcode"),
+                     ("pack.zip", "zip")):
         p = classify.classify(_att(fn))
         assert p["has_model_file"], fn
         assert p["model_files"][0]["kind"] == kind, fn
