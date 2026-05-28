@@ -68,6 +68,8 @@ def _route(parsed):
         return "group_progress"
     if parsed["is_go"]:
         return "group_go"
+    if parsed["is_skip"]:
+        return "group_skip"
     if parsed["is_numbered"]:
         return "group_reply"
     # Unrecognized *text* in our own group → friendly "didn't get that" + help.
@@ -130,6 +132,8 @@ async def handle(envelope):
             await _progress(parsed["group_send_id"])
         elif route == "group_go":
             await _go(parsed["group_send_id"])
+        elif route == "group_skip":
+            await _skip(parsed["group_send_id"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
         elif route == "group_unknown":
@@ -623,11 +627,53 @@ _STATUS_EMOJI = {
 }
 
 
+async def _skip(group_id):
+    """Skip the current plate's color question, keeping the already-configured
+    plates. Continues with the next pending plate, or slices what's collected."""
+    job = store.active_job(group_id)
+    if not job or job["stage"] != "awaiting_colors":
+        await signal_client.send_to_group(group_id, "Gerade ist keine Farbfrage offen zum Überspringen.")
+        return
+    if not store.claim_stage(group_id, "awaiting_colors", "configuring"):
+        return
+    plates = json.loads(job["plates"] or "[]")
+    pending = json.loads(job["pending_plates"] or "[]")
+    decisions = json.loads(job["decisions"] or "[]")
+    plate = next((p for p in plates if p.get("index") == job["plate_index"]), {"index": job["plate_index"]})
+    label = _plate_label(job["model_name"], plate, len(plates) > 1)
+    if pending:
+        store.update_dialog(job["id"], pending_plates=json.dumps(pending[1:]))
+        await signal_client.send_to_group(group_id, f'⏭️ „{label}" übersprungen. ➡️ Nächstes Plate:')
+        next_idx = pending[0]
+        next_plate = next((p for p in plates if p.get("index") == next_idx), {"index": next_idx, "filaments": []})
+        await _ask_colors(group_id, job["id"], job["library_file_id"],
+                          _plate_label(job["model_name"], next_plate, True), next_plate)
+    elif decisions:
+        await signal_client.send_to_group(
+            group_id, f'⏭️ „{label}" übersprungen. Ich reihe die {len(decisions)} konfigurierten ein:'
+        )
+        await _slice_all(group_id, job, decisions, plates)
+    else:
+        store.discard_dialog(job["id"])
+        await signal_client.send_to_group(group_id, "⏭️ Übersprungen — nichts mehr zu drucken übrig.")
+
+
 async def _cancel(group_id):
     """Drop an open dialog, else remove the last still-pending queue item.
     A print that is already running is never stopped."""
     dialog = store.active_job(group_id)
     if dialog:
+        # Don't throw away already-configured plates: queue those, drop the rest.
+        decisions = json.loads(dialog["decisions"] or "[]")
+        if decisions and store.claim_stage(group_id, dialog["stage"], "configuring"):
+            plates = json.loads(dialog["plates"] or "[]")
+            await signal_client.send_to_group(
+                group_id,
+                f'🗑️ Aktuelles/restliche Plates verworfen. Die {len(decisions)} schon '
+                "konfigurierten reihe ich ein:",
+            )
+            await _slice_all(group_id, dialog, decisions, plates)
+            return
         store.discard_dialog(dialog["id"])
         await signal_client.send_to_group(
             group_id,

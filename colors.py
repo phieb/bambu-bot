@@ -209,13 +209,14 @@ HELP_TEXT = (
     "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
     "• !liste → zeigt die Druck-Queue\n"
     "• !go → Platte ist frei, nächsten Druck starten\n"
-    "• !abbrechen → offene Farbfrage verwerfen, sonst letzten wartenden "
-    "Queue-Job entfernen (laufende Drucke bleiben)\n"
+    "• !skip → aktuelles Plate überspringen (z.B. Farbe fehlt), Rest bleibt\n"
+    "• !abbrechen → restliche Plates verwerfen (schon konfigurierte werden "
+    "eingereiht); ohne offenen Dialog: letzten wartenden Queue-Job entfernen\n"
     "• !help → diese Übersicht\n"
     "Wenn dein Druck fertig ist, meld ich mich automatisch."
 )
 
-_HINT = "💡 !progress · !liste · !go · !abbrechen · !help"
+_HINT = "💡 mehrere Plates? !skip überspringt eins · !abbrechen reiht die fertigen ein · !liste · !go"
 
 UNKNOWN_TEXT = "🤔 Da kenn ich mich nicht aus. Das kann ich:\n\n" + HELP_TEXT
 

@@ -26,6 +26,8 @@ _PROGRESS = re.compile(r"^\s*!\s*(progress|fortschritt|status|druck)\s*$", re.I)
 _HELP = re.compile(r"^\s*!\s*(hilfe|help|befehle|commands|\?)\s*$", re.I)
 # Acknowledge the build plate is clear so Bambuddy starts the next queued print.
 _GO = re.compile(r"^\s*!\s*(go|los|weiter|frei|clear)\s*$", re.I)
+# Skip the current plate's color question, keep the already-configured ones.
+_SKIP = re.compile(r"^\s*!\s*(skip|überspringen|ueberspringen|weglassen|auslassen)\s*$", re.I)
 
 
 def normalize_group(raw):
@@ -153,6 +155,7 @@ def classify(envelope):
         "is_progress": bool(_PROGRESS.match(message)),
         "is_help": bool(_HELP.match(message)),
         "is_go": bool(_GO.match(message)),
+        "is_skip": bool(_SKIP.match(message)),
     }
 
 

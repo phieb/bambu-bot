@@ -164,6 +164,14 @@ def test_go_keywords():
     assert not _grp("!go jetzt")["is_go"]  # whole message only
 
 
+def test_skip_keywords():
+    for m in ("!skip", "!Skip", " !überspringen ", "!ueberspringen", "!weglassen"):
+        assert _grp(m)["is_skip"], m
+    assert not _grp("skip")["is_skip"]  # needs the ! prefix
+    assert not _grp("3 1")["is_skip"]
+    assert not _grp("!go")["is_skip"]
+
+
 INNER = {"sourceNumber": "+1", "dataMessage": {"message": "x"}}
 
 
