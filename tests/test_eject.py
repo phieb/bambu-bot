@@ -5,10 +5,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import classify  # noqa: E402
 import config  # noqa: E402
+import eject  # noqa: E402
 import handlers  # noqa: E402
 import store  # noqa: E402
 
-_GCODE_H = "; total layer number: 25\n; max_z_height: {h:.2f}\nG1 X1 Y1 Z250\n"
+_GCODE_H = ("; total layer number: 25\n; max_z_height: {h:.2f}\n"
+            "G1 X1 Y1 Z250\n; EXECUTABLE_BLOCK_END\n")
 
 
 def _setup(tmp_path, enabled):
@@ -25,6 +27,15 @@ def _fake_queue(calls):
     return fake
 
 
+def _capture_upload(uploads):
+    async def fake_ensure(_name):
+        return 2
+    async def fake_upload(content, filename, folder_id=None):
+        uploads.append({"content": content, "filename": filename, "folder_id": folder_id})
+        return {"id": 555}
+    return fake_ensure, fake_upload
+
+
 def _gcode(text):
     data = text.encode() if isinstance(text, str) else text
     async def fake(_file_id):
@@ -33,13 +44,16 @@ def _gcode(text):
 
 
 def _gcode_zip(height):
-    """A .gcode.3mf-style zip blob with the plate gcode inside, like Bambuddy
-    returns for sliced library files."""
+    """A .gcode.3mf-style zip blob with the plate gcode + md5 inside, like
+    Bambuddy returns for sliced library files."""
+    import hashlib
     import io
     import zipfile
+    g = _GCODE_H.format(h=height).encode()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("Metadata/plate_1.gcode", _GCODE_H.format(h=height))
+        z.writestr("Metadata/plate_1.gcode", g)
+        z.writestr("Metadata/plate_1.gcode.md5", hashlib.md5(g).hexdigest().upper())
         z.writestr("Metadata/project_settings.config", "{}")
     return buf.getvalue()
 
@@ -89,14 +103,82 @@ def test_max_z_height_reads_zip_and_plain():
 
 def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     _setup(tmp_path, enabled=True)
-    calls = []
+    calls, uploads = [], []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
     # realistic: a sliced library file comes back as a .gcode.3mf zip
     monkeypatch.setattr(handlers.bambuddy, "get_gcode", _gcode(_gcode_zip(42.0)))
+    fake_ensure, fake_upload = _capture_upload(uploads)
+    monkeypatch.setattr(handlers.bambuddy, "ensure_folder", fake_ensure)
+    monkeypatch.setattr(handlers.bambuddy, "upload_library_file", fake_upload)
 
     queued, _ = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0]))
     assert queued
-    assert calls == [{"file_id": 7, "inject": True}]
+    # the eject is injected into a re-uploaded file; that new file is queued with
+    # Bambuddy's own injection OFF (we did the injection ourselves)
+    assert calls == [{"file_id": 555, "inject": False}]
+    assert len(uploads) == 1
+    assert uploads[0]["filename"].endswith(".gcode.3mf")
+    # the re-uploaded container actually carries the height-tailored eject + valid md5
+    import hashlib
+    import io
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(uploads[0]["content"]))
+    g = z.read("Metadata/plate_1.gcode")
+    assert b"Farmloop Auto-Eject" in g
+    assert b"H=42.0mm" in g
+    assert z.read("Metadata/plate_1.gcode.md5").decode() == hashlib.md5(g).hexdigest().upper()
+
+
+def test_eject_fallback_multiplate_blocked(tmp_path, monkeypatch):
+    _setup(tmp_path, enabled=True)
+    calls = []
+    monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
+
+    async def boom(_):
+        raise AssertionError("should not fetch gcode for the blocked fallback path")
+    monkeypatch.setattr(handlers.bambuddy, "get_gcode", boom)
+
+    queued, note = asyncio.run(
+        handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3))
+    assert not queued and "🚫" in note
+    assert calls == []
+
+
+def test_build_end_gcode_height_scales():
+    tall = eject.build_end_gcode(150.0)
+    short = eject.build_end_gcode(5.0)
+    # sweep height tracks the print: 150 - OVERSHOOT(4) = 146.0
+    assert "Z146.0 F" in tall
+    # a print shorter than the overshoot clamps to MIN_SWEEP_Z, never below the bed
+    assert f"Z{eject.MIN_SWEEP_Z:.1f} F" in short
+    # bender always flexes deep regardless of height
+    assert f"Z{eject.BENDER_DEEP_Z:.1f} F" in tall
+    # one sweep pass per lane
+    for x in eject.LANES_X:
+        assert f"X{x:.2f} Y{eject.Y_BACK:.1f}" in tall
+
+
+def test_inject_3mf_roundtrip():
+    import hashlib
+    import io
+    import zipfile
+    data = _gcode_zip(80.0)
+    out = eject.inject_3mf(data, 80.0)
+    z = zipfile.ZipFile(io.BytesIO(out))
+    g = z.read("Metadata/plate_1.gcode")
+    # eject is appended *before* the executable block end marker
+    assert g.index(b"Farmloop Auto-Eject") < g.index(b"; EXECUTABLE_BLOCK_END")
+    # md5 sidecar matches the rewritten gcode, uppercase, no trailing newline
+    side = z.read("Metadata/plate_1.gcode.md5")
+    assert side == hashlib.md5(g).hexdigest().upper().encode()
+    # other members are preserved
+    assert "Metadata/project_settings.config" in z.namelist()
+
+
+def test_inject_3mf_rejects_non_zip():
+    import pytest
+    with pytest.raises(ValueError):
+        eject.inject_3mf(b"not a zip", 50.0)
 
 
 def test_gate_on_tall_print_blocked(tmp_path, monkeypatch):
