@@ -3,9 +3,9 @@
 Signal-driven 3D-print queue bot. A small HTTP service that an upstream
 **dispatcher** — e.g. [signal-router](https://github.com/phieb/signal-router) —
 forwards Signal messages to: it answers "is this mine?" via `/claims` and, if so,
-does the work via `/receive`. It knows which senders it may act for, talks back
-over a Signal REST API, and turns MakerWorld links into print jobs on
-[Bambuddy](https://github.com/maziggy/bambuddy).
+does the work via `/receive`. It turns model links **and uploaded files** into
+print jobs on [Bambuddy](https://github.com/maziggy/bambuddy), talking back over
+a Signal REST API.
 
 ## Flow
 
@@ -14,23 +14,63 @@ Signal message → dispatcher → bambu-bot /claims → yes → bambu-bot /recei
                                                  → no  → not handled here
 ```
 
-A **DM with a MakerWorld link** finds-or-creates the sender's persistent Signal
-group, then runs a small dialog state machine in that group. Each step is a
-**numbered reply**; steps with only one option are skipped automatically:
+Work happens in the sender's **persistent per-person Signal group** (found or
+created on first contact). DM intake replies are sent there, never back in the DM.
 
-1. **Profile** — if the model has several MakerWorld print profiles, ask which
-   one (profiles made for the configured printer are flagged and counted).
-2. **Plate(s)** — after importing the chosen profile, if it's a multi-plate
-   project, ask which plate(s) to print (rendered plate thumbnails attached).
-   Multiple plates can be selected at once → one queue job each.
-3. **Colors** — for each selected plate, ask which AMS slot to use per filament
-   (plate thumbnail + a generated color swatch attached). On reply the plate is
-   **re-sliced for the target printer** (so a MakerWorld X1C slice doesn't land on
-   a P1S) and queued via `POST /queue/` (auto-dispatch, gcode injection on).
+## Intake sources
+
+All of these end up in the same plate → color → re-slice → queue tail:
+
+- **MakerWorld link** — `resolve` + `import` → library file, then the dialog below.
+- **Direct file link** — a URL ending in `.3mf` / `.gcode` / `.stl` / `.zip`
+  (any host, no login) is downloaded and run through the file intake.
+- **File attachment** — `.3mf` / `.gcode` / `.stl` / `.zip` sent in Signal. The
+  bytes are fetched from the Signal REST API (`GET /v1/attachments/{id}`) and
+  uploaded into a dedicated **library folder** (`BAMBU_SIGNAL_FOLDER`, created if
+  missing).
+- **Thingiverse link** — `thingiverse.com/thing:<id>` (needs `THINGIVERSE_TOKEN`):
+  the thing's printable files are pulled via the API, bundled into an in-memory
+  zip, and run through the zip path. Without a token, Thingiverse links get the
+  "send me the file" reply.
+- **Other model links** (Printables / Cults3D / MyMiniFactory / Thangs) can't be
+  resolved (login-walled) → a friendly reply asks for the file or a direct link.
+
+### File-type handling
+
+- **`.gcode`** — already sliced → queued as-is (no color dialog).
+- **`.3mf` / `.stl`** — uploaded, then the plate/color dialog. A raw **STL** is
+  first **arranged onto the bed** (centered on `BED_SIZE_MM`/2, dropped to Z=0)
+  so the slicer doesn't drop an off-origin object. A file with no plates is
+  treated as a single one-filament plate.
+- **`.zip`** — extracted via Bambuddy; **each extracted file becomes its own
+  selectable item** (its own `library_file_id`), so a multi-STL zip behaves like
+  a multi-plate 3MF. STLs inside the zip are arranged onto the bed too.
+
+## Dialog state machine
+
+Each step is a **numbered reply**; steps with one option auto-skip:
+
+1. **Profile** — MakerWorld only: if several print profiles, ask which (profiles
+   for the configured printer are flagged + counted).
+2. **Plate(s) / items** — if more than one, ask which to print (numbered
+   thumbnails attached, each stamped with its list position). **Multi-select**
+   (`1 3`) is allowed.
+3. **Colors** — per selected plate, ask which AMS slot per filament (plate/model
+   thumbnail + a generated color swatch attached).
+
+**Collect-then-slice:** with multiple plates, all color choices are gathered
+first (stored per plate), then everything is sliced + queued at once with one
+summary. Per-plate errors are isolated.
+
+Each plate is **re-sliced for the target printer** (so a MakerWorld X1C slice
+doesn't land on a P1S) — one filament preset per plate filament, resolved from
+the chosen AMS slot. Custom personal filament presets (`PFUS…`, synced from
+non-Bambu spools) are skipped because the slicer sidecar can't parse them; it
+falls back to the matching Bambu system preset. Queue items are tagged
+`target_model` so they dispatch without relying on Bambuddy's `default_printer_id`.
 
 One open dialog per group; a second link while one is open → "finish current
-first". Every stage transition is idempotent (atomic claim). Unrecognized
-senders / unregistered groups are silently ignored.
+first". Every stage transition is idempotent (atomic claim).
 
 ### Group commands (`!` prefix)
 
@@ -38,50 +78,63 @@ senders / unregistered groups are silently ignored.
 |---|---|
 | `!progress` / `!status` | Live print state (%, layer, ETA) **+ a camera snapshot** |
 | `!liste` / `!queue` | The current Bambuddy queue with status emoji |
-| `!abbrechen` / `!cancel` | Drop the open dialog, else delete the last *pending* queue item (a running print is never stopped) |
+| `!go` / `!los` / `!frei` | Confirm the plate is clear → release the next queued print (`POST /printers/{id}/clear-plate`) |
+| `!skip` | Skip the current plate's color question (e.g. missing filament), keep the rest |
+| `!abbrechen` / `!cancel` | Queue the already-configured plates and drop the rest; with nothing configured, discard the dialog; with no dialog, delete the last *pending* queue item (a running print is never stopped) |
 | `!help` / `!hilfe` | Command overview |
 
-When a queued print finishes (or fails), the bot messages the group that queued
-it. Prints started through other channels aren't tracked, so they get no
-Signal update.
+In a **registered group the bot claims every message** (so nothing leaks to other
+tools); unrecognized text gets a friendly "here's what I can do" reply. When a
+queued print finishes/fails, the bot messages the group that queued it. Prints
+started through other channels aren't tracked → no Signal update.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/claims` | Side-effect-free predicate → `{"claims": bool}` |
-| POST | `/receive` | Handle the message (background), returns `{"status":"accepted"}` |
+| POST | `/receive` | Handle the message (background) → `{"status":"accepted"}` |
 | GET | `/health` | `{"status":"ok"}` |
 
-All accept the Signal envelope as the bare object, `{envelope:...}`, or
-`{body:{envelope:...}}` (whatever the dispatcher forwards).
+All accept the Signal envelope as the bare object, `{envelope:…}`, or
+`{body:{envelope:…}}` (whatever the dispatcher forwards).
 
 ## Config (env)
 
 | Var | Default |
 |---|---|
 | `BAMBUDDY_URL` | `http://bambuddy:8010` |
-| `SIGNAL_URL` | `http://signal-api:8080` |
+| `SIGNAL_URL` | `http://signal-cli:8080` (Signal REST API: `/v2/send`, `/v1/groups/{number}`, `/v1/attachments/{id}`) |
 | `SIGNAL_BOT_NUMBER` | _(required, e.g. `+431234567`)_ |
 | `DB_PATH` | `/data/bambu.db` |
 | `BAMBUDDY_PRINTER_ID` | `1` |
-| `BAMBUDDY_PRINTER_MODEL` | `P1S` (re-slice target + which profiles get flagged) |
+| `BAMBUDDY_PRINTER_MODEL` | `P1S` (re-slice target + profile flagging + queue `target_model`) |
 | `BAMBUDDY_NOZZLE` | `0.4` |
+| `BAMBUDDY_BED_SIZE_MM` | `256` (used to center raw STLs) |
 | `BAMBU_GROUP_NAME` | `🖨️ Bambu Print Queue` |
+| `BAMBU_SIGNAL_FOLDER` | `signal` (library folder for uploaded files) |
+| `THINGIVERSE_TOKEN` | _(empty → Thingiverse links get the generic reply)_ |
 
 ## State (sqlite, `DB_PATH`)
 
 - `groups(sender PK, group_id, group_name, created_at)` — persistent per-user group
-- `jobs(id, group_id, sender, model_id, library_file_id, model_name, required_colors, ams_snapshot, stage, queue_item_id, profile_id, profiles, plates, pending_plates, plate_index, plate_name, …)` — two row kinds: one **dialog** per group (a non-terminal stage carrying the in-progress selection) and one **tracker** per queued plate (`stage='queued'`, watched for completion)
+- `jobs(…)` — two row kinds: one **dialog** per group (a non-terminal stage
+  carrying the in-progress selection: `profiles`, `plates`, `pending_plates`,
+  `decisions`, `plate_index`, …) and one **tracker** per queued plate
+  (`stage='queued'`, watched for completion).
+
+## Modules
+
+`classify.py` envelope → route · `colors.py` color analysis/parse + hex→name ·
+`stl.py` bed-arrange raw STLs · `thingiverse.py` API download · `swatch.py`
+Pillow swatch/thumbnail PNGs · `store.py` sqlite · `bambuddy.py` Bambuddy client ·
+`signal_client.py` Signal REST · `handlers.py` logic · `app.py` FastAPI.
 
 ## Deploy
 
-Add `docker-compose.bambu-bot.yml` to a compose stack on the **same network** as
-your dispatcher and your Signal REST API, set the env vars, then
-`docker compose up -d bambu-bot`.
-
-`SIGNAL_URL` must point at a Signal REST API exposing `/v2/send` and
-`/v1/groups/{number}` (the bot sends messages and creates groups through it).
+Runs on the same network as the dispatcher, the Signal REST API, and reachable
+Bambuddy. Image `ghcr.io/phieb/bambu-bot:latest` (GH Action builds on push to
+`main`; watchtower pulls). `docker compose up -d bambu-bot`.
 
 ## Dev / tests
 
