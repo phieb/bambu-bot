@@ -57,7 +57,9 @@ async def queue(library_file_id, ams_mapping, plate_id=None):
         "ams_mapping": ams_mapping,
         "gcode_injection": True,
         "use_ams": True,
-        "printer_id": None,  # auto-dispatch
+        "printer_id": None,            # no specific printer …
+        "target_model": config.PRINTER_MODEL,  # … but dispatch to any P1S, so the
+        # scheduler starts it without relying on Bambuddy's default_printer_id.
     }
     if plate_id is not None:
         body["plate_id"] = int(plate_id)  # which plate of a multi-plate 3MF
