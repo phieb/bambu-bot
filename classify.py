@@ -28,6 +28,21 @@ _HELP = re.compile(r"^\s*!\s*(hilfe|help|befehle|commands|\?)\s*$", re.I)
 _GO = re.compile(r"^\s*!\s*(go|los|weiter|frei|clear)\s*$", re.I)
 # Skip the current plate's color question, keep the already-configured ones.
 _SKIP = re.compile(r"^\s*!\s*(skip|überspringen|ueberspringen|weglassen|auslassen)\s*$", re.I)
+# Toggle Farmloop auto-eject; optional arg on|off (no arg → show status).
+_EJECT = re.compile(r"^\s*!\s*(eject|auswurf|auswerfen)(?:\s+(on|an|ein|off|aus|status))?\s*$", re.I)
+
+
+def eject_command(message):
+    """('on'|'off'|'status') if the message is an !eject command, else None."""
+    m = _EJECT.match(message)
+    if not m:
+        return None
+    arg = (m.group(2) or "").lower()
+    if arg in ("on", "an", "ein"):
+        return "on"
+    if arg in ("off", "aus"):
+        return "off"
+    return "status"
 
 
 def normalize_group(raw):
@@ -156,6 +171,7 @@ def classify(envelope):
         "is_help": bool(_HELP.match(message)),
         "is_go": bool(_GO.match(message)),
         "is_skip": bool(_SKIP.match(message)),
+        "eject_command": eject_command(message),
     }
 
 

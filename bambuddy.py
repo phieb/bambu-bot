@@ -18,6 +18,13 @@ async def _get(path):
         return r.json()
 
 
+async def _patch(path, body):
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.patch(config.BAMBUDDY_URL + path, json=body)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+
 async def _delete(path):
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.delete(config.BAMBUDDY_URL + path)
@@ -51,11 +58,12 @@ async def camera_snapshot(printer_id):
         return None
 
 
-async def queue(library_file_id, ams_mapping, plate_id=None):
+async def queue(library_file_id, ams_mapping, plate_id=None, gcode_injection=True):
     body = {
         "library_file_id": int(library_file_id),
         "ams_mapping": ams_mapping,
-        "gcode_injection": True,
+        "gcode_injection": gcode_injection,  # apply Bambuddy's global per-model
+        # snippet (the eject end-gcode) — off for tall prints / when tools are away.
         "use_ams": True,
         "printer_id": None,            # no specific printer …
         "target_model": config.PRINTER_MODEL,  # … but dispatch to any P1S, so the
@@ -140,6 +148,24 @@ async def file_thumbnail(library_file_id):
             return r.content if "image" in ct and r.content else None
     except Exception:
         return None
+
+
+async def get_gcode(library_file_id):
+    """Raw G-code text of a (sliced) library file, or None (best-effort). Used to
+    read the print height from the ``; max_z_height:`` header comment."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.get(config.BAMBUDDY_URL + f"/api/v1/library/files/{int(library_file_id)}/gcode")
+            r.raise_for_status()
+            return r.text
+    except Exception:
+        return None
+
+
+async def set_require_plate_clear(value):
+    """Toggle Bambuddy's global 'wait for manual plate-clear between jobs' setting.
+    Off while auto-eject is active so the queue flows without manual !go."""
+    return await _patch("/api/v1/settings", {"require_plate_clear": bool(value)})
 
 
 async def clear_plate(printer_id):

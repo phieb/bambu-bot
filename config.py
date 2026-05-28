@@ -18,3 +18,7 @@ SIGNAL_FOLDER_NAME = os.environ.get("BAMBU_SIGNAL_FOLDER", "signal")
 # Thingiverse app token (thingiverse.com/developers). Empty → Thingiverse links
 # get the generic "send me the file" reply instead of a direct download.
 THINGIVERSE_TOKEN = os.environ.get("THINGIVERSE_TOKEN", "")
+# Auto-eject (Farmloop): max print height (mm) that is safe while the eject tools
+# are mounted — above it the descending bed runs into the bender clip mid-print.
+# Conservative default; verify at the machine (the eject bends around Z190–250).
+EJECT_MAX_HEIGHT_MM = float(os.environ.get("EJECT_MAX_HEIGHT_MM", "180"))

@@ -70,6 +70,8 @@ def _route(parsed):
         return "group_go"
     if parsed["is_skip"]:
         return "group_skip"
+    if parsed["eject_command"]:
+        return "group_eject"
     if parsed["is_numbered"]:
         return "group_reply"
     # Unrecognized *text* in our own group → friendly "didn't get that" + help.
@@ -134,6 +136,8 @@ async def handle(envelope):
             await _go(parsed["group_send_id"])
         elif route == "group_skip":
             await _skip(parsed["group_send_id"])
+        elif route == "group_eject":
+            await _eject(parsed["group_send_id"], parsed["eject_command"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
         elif route == "group_unknown":
@@ -298,13 +302,12 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
         lfid = uploaded["id"]
         if kind == "gcode":
             # Already sliced for a machine — queue as-is, no color dialog.
-            resp = await bambuddy.queue(lfid, [], plate_id=None)
-            item_id = resp.get("id") if isinstance(resp, dict) else None
-            store.add_queued(group_id, sender, name, lfid, item_id)
             store.delete_job(job_id)
+            queued, note = await _queue_guarded(group_id, sender, name, lfid, [])
             await signal_client.send_to_group(
                 group_id,
-                f'✅ „{name}" ist in der Queue (vorgeslict)! Ich sag Bescheid, wenn er fertig ist.',
+                f'✅ „{name}" ist in der Queue (vorgeslict)! Ich sag Bescheid, wenn er fertig ist.'
+                if queued else f'„{name}": {note}',
             )
         else:
             await _from_library_file(group_id, job_id, name, lfid)
@@ -502,6 +505,62 @@ async def _config(group_id, job, message):
         await signal_client.send_to_group(group_id, "❌ Da ist was schiefgelaufen.")
 
 
+EJECT_FLAG = "eject_enabled"
+_MAX_Z_RE = re.compile(r"^;\s*max_z_height:\s*([0-9.]+)", re.M)
+
+
+async def _print_height(file_id):
+    """Print height (mm) from the sliced gcode ``; max_z_height:`` header, or None.
+    (Parsing G1 Z moves is unreliable — the end-gcode parks the bed at Z250.)"""
+    text = await bambuddy.get_gcode(file_id)
+    if not text:
+        return None
+    m = _MAX_Z_RE.search(text)
+    return float(m.group(1)) if m else None
+
+
+async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None):
+    """Queue one sliced file, honoring the auto-eject safety gate. Returns
+    (queued, note). With eject on, the global per-model end-gcode is injected
+    (gcode_injection); a print taller than the bender limit — or one whose height
+    can't be read — is refused, because the descending bed would hit the bender
+    mid-print. With eject off, no injection and no height limit."""
+    inject = store.get_flag(EJECT_FLAG, False)
+    if inject:
+        h = await _print_height(file_id)
+        if h is None:
+            return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber nicht gestartet "
+                           "(Auswerfer an). „!eject off“ druckt ohne Auswerfer.")
+        if h > config.EJECT_MAX_HEIGHT_MM:
+            return False, (f"🚫 {h:.0f} mm hoch, max {config.EJECT_MAX_HEIGHT_MM:.0f} mm mit "
+                           "Auswerfer (sonst fährt das Bett in den Bender). Tools ab + „!eject off“.")
+    resp = await bambuddy.queue(file_id, mapping, plate_id=plate_id, gcode_injection=inject)
+    item_id = resp.get("id") if isinstance(resp, dict) else None
+    store.add_queued(group_id, sender, label, file_id, item_id)
+    return True, ""
+
+
+async def _eject(group_id, command):
+    """Toggle / show Farmloop auto-eject. On also turns off Bambuddy's manual
+    plate-clear wait so the queue flows without !go; off restores it."""
+    if command in ("on", "off"):
+        enable = command == "on"
+        try:
+            await bambuddy.set_require_plate_clear(not enable)
+        except Exception:
+            log.exception("toggling require_plate_clear failed")
+        store.set_flag(EJECT_FLAG, enable)
+    enabled = store.get_flag(EJECT_FLAG, False)
+    if enabled:
+        msg = (f"🧹 Auto-Auswurf ist **an** (max {config.EJECT_MAX_HEIGHT_MM:.0f} mm Druckhöhe). "
+               "Nach jedem Druck wirft der Drucker selbst aus, der nächste Job startet automatisch. "
+               "Zu hohe Drucke werden gesperrt. Tools physisch montiert? Mit „!eject off“ wieder aus.")
+    else:
+        msg = ("🛑 Auto-Auswurf ist **aus** — normaler Betrieb, „!go“ zwischen den Drucken. "
+               "Erst einschalten, wenn die Farmloop-Tools montiert sind: „!eject on“.")
+    await signal_client.send_to_group(group_id, msg)
+
+
 async def _slice_all(group_id, job, decisions, plates):
     """Slice + queue every collected plate decision in order, then report once.
     Per-plate errors are isolated so one bad plate doesn't lose the others."""
@@ -529,10 +588,11 @@ async def _slice_all(group_id, job, decisions, plates):
             # A successful re-slice yields a single-plate file; only the fallback
             # to the original multi-plate file still needs plate_id.
             plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
-            resp = await bambuddy.queue(file_id, d["mapping"], plate_id=plate_id)
-            item_id = resp.get("id") if isinstance(resp, dict) else None
-            store.add_queued(group_id, job["sender"], label, file_id, item_id)
-            lines.append(f'✅ „{label}" — Farben {nums}{note}')
+            queued, gate = await _queue_guarded(group_id, job["sender"], label, file_id, d["mapping"], plate_id)
+            if queued:
+                lines.append(f'✅ „{label}" — Farben {nums}{note}')
+            else:
+                lines.append(f'„{label}": {gate}')
         except Exception:
             log.exception("slice/queue failed for plate %s", d.get("index"))
             lines.append(f'❌ „{label}" fehlgeschlagen')
@@ -767,10 +827,12 @@ async def _check_completions():
             continue
         status = item.get("status")
         if status == "completed":
+            tail = ("Auto-Auswurf läuft — der nächste Druck startet von selbst. 🧹"
+                    if store.get_flag(EJECT_FLAG, False)
+                    else "Wenn die Platte frei ist: !go → nächster Druck startet.")
             await signal_client.send_to_group(
                 job["group_id"],
-                f'✅ „{job["model_name"]}" ist fertig gedruckt! 🎉\n'
-                "Wenn die Platte frei ist: !go → nächster Druck startet.",
+                f'✅ „{job["model_name"]}" ist fertig gedruckt! 🎉\n' + tail,
             )
             store.set_stage(job["id"], "done")
         elif status == "failed":

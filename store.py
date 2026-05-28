@@ -53,6 +53,12 @@ def init_db():
                 updated_at REAL
             )"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )"""
+        )
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_group_stage ON jobs(group_id, stage)")
         cols = [r[1] for r in c.execute("PRAGMA table_info(jobs)").fetchall()]
         for name, decl in (
@@ -67,6 +73,23 @@ def init_db():
         ):
             if name not in cols:
                 c.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
+
+
+# ----- settings (global key/value) -----
+
+def get_flag(key, default=False):
+    """Read a boolean flag (stored as '1'/'0'); ``default`` if unset."""
+    with _conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return default if r is None else r["value"] == "1"
+
+
+def set_flag(key, value):
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)",
+            (key, "1" if value else "0"),
+        )
 
 
 # ----- groups (registry) -----
