@@ -71,6 +71,31 @@ def shrink_image(data, max_px=512, quality=82):
         return None
 
 
+def numbered_thumbnail(data, n, max_px=512, quality=82):
+    """Like ``shrink_image`` but stamps the selection number ``n`` in the top-left
+    corner, so a multi-image plate gallery stays unambiguous. Falls back to a
+    plain shrink if drawing fails."""
+    if Image is None or not data:
+        return None
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img.thumbnail((max_px, max_px))
+        d = ImageDraw.Draw(img)
+        label = str(n)
+        f = _font(44, bold=True)
+        bbox = d.textbbox((0, 0), label, font=f)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = 10
+        d.rectangle([6, 6, 6 + tw + pad * 2, 6 + th + pad * 2], fill=(20, 20, 20))
+        d.text((6 + pad - bbox[0], 6 + pad - bbox[1]), label, font=f, fill=(255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        log.warning("numbered thumbnail failed", exc_info=True)
+        return shrink_image(data, max_px, quality)
+
+
 def build(name, required, ams):
     """Required colors + AMS slots as a labeled swatch PNG (base64) or None."""
     if Image is None:

@@ -338,7 +338,12 @@ async def _send_plate_question(group_id, lfid, name, plates):
     text = colors.build_plate_question(name, plates)
     srcs = [_plate_source(p, lfid) for p in plates]
     raws = await asyncio.gather(*(_thumbnail(l, idx) for l, idx in srcs))
-    shrunk = await asyncio.gather(*(asyncio.to_thread(swatch.shrink_image, r) for r in raws if r))
+    # Stamp each thumbnail with its list position (what the text lists and a reply
+    # selects) so a multi-image gallery isn't ambiguous.
+    shrunk = await asyncio.gather(*(
+        asyncio.to_thread(swatch.numbered_thumbnail, r, i)
+        for i, r in enumerate(raws, 1) if r
+    ))
     attachments = [s for s in shrunk if s]
     await signal_client.send_to_group(group_id, text, attachments=attachments or None)
 
