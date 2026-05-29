@@ -674,7 +674,7 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
                            "und erneut schicken druckt's ohne Auswerfer.")
     resp = await bambuddy.queue(queue_file_id, mapping, plate_id=plate_id, gcode_injection=False)
     item_id = resp.get("id") if isinstance(resp, dict) else None
-    store.add_queued(group_id, sender, label, queue_file_id, item_id)
+    store.add_queued(group_id, sender, label, queue_file_id, item_id, eject=eject_on)
     return True, ""
 
 
@@ -696,6 +696,13 @@ async def _eject(group_id, command):
     else:
         msg = ("🛑 Auto-Auswurf ist **aus** — normaler Betrieb, „!go“ zwischen den Drucken. "
                "Erst einschalten, wenn die Farmloop-Tools montiert sind: „!eject on“.")
+        # Jobs already in the queue keep their injected eject — flag them so it's
+        # no surprise when they still auto-eject despite the switch being off.
+        pending_eject = store.queued_eject_jobs()
+        if pending_eject:
+            names = "\n".join(f"  • {n}" for n in pending_eject)
+            msg += (f"\n\n⚠️ Diese {len(pending_eject)} schon gequeueten Drucke haben den Auswurf "
+                    f"**bereits im Gcode** und werfen trotzdem aus:\n{names}")
     await signal_client.send_to_group(group_id, msg)
 
 
@@ -923,12 +930,17 @@ async def _list(group_id):
     if not open_items:
         await signal_client.send_to_group(group_id, "📋 Keine offenen Drucke in der Queue.")
         return
+    ejects = store.eject_by_item()  # {queue_item_id: bool} for bot-tracked jobs
     lines = []
     for i, it in enumerate(open_items, 1):
         nm = (it.get("library_file_name") or it.get("archive_name")
               or it.get("target_model") or f'#{it.get("id")}')
         st = it.get("status") or "?"
-        lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st})'.replace("  ", " "))
+        # eject tag: 🧹 = with auto-eject, ✋ = without; nothing for jobs the bot
+        # didn't queue (e.g. a Bambu Studio print — we don't know).
+        e = ejects.get(it.get("id"))
+        tag = " · 🧹 Auswurf" if e else (" · ✋ ohne Auswurf" if e is False else "")
+        lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st}){tag}'.replace("  ", " "))
     await signal_client.send_to_group(group_id, "📋 Queue (offen):\n" + "\n".join(lines))
 
 

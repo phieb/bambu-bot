@@ -72,6 +72,7 @@ def init_db():
             ("plate_index", "INTEGER"),
             ("plate_name", "TEXT"),
             ("decisions", "TEXT"),
+            ("eject", "INTEGER"),
         ):
             if name not in cols:
                 c.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
@@ -185,17 +186,41 @@ def delete_job(job_id):
 
 # ----- queued trackers (one per plate) -----
 
-def add_queued(group_id, sender, model_name, library_file_id, queue_item_id):
-    """Record a queued plate so it can be watched for completion / cancelled."""
+def add_queued(group_id, sender, model_name, library_file_id, queue_item_id, eject=False):
+    """Record a queued plate so it can be watched for completion / cancelled.
+    ``eject`` = a Farmloop eject was injected into this job's gcode."""
     now = time.time()
     with _conn() as c:
         cur = c.execute(
             """INSERT INTO jobs (group_id, sender, model_name, library_file_id,
-                                 queue_item_id, stage, created_at, updated_at)
-               VALUES (?,?,?,?,?, 'queued', ?, ?)""",
-            (group_id, sender, model_name, library_file_id, queue_item_id, now, now),
+                                 queue_item_id, eject, stage, created_at, updated_at)
+               VALUES (?,?,?,?,?,?, 'queued', ?, ?)""",
+            (group_id, sender, model_name, library_file_id, queue_item_id,
+             1 if eject else 0, now, now),
         )
         return cur.lastrowid
+
+
+def eject_by_item():
+    """{queue_item_id: bool} — whether each still-active tracked job has an eject
+    injected. For annotating !liste and warning on !eject off."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT queue_item_id, eject FROM jobs "
+            "WHERE stage IN ('queued','printing') AND queue_item_id IS NOT NULL"
+        ).fetchall()
+        return {r["queue_item_id"]: bool(r["eject"]) for r in rows}
+
+
+def queued_eject_jobs():
+    """model_names of still-active tracked jobs that have an eject baked in —
+    these keep ejecting even after !eject off (it's already in their gcode)."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT model_name FROM jobs "
+            "WHERE stage IN ('queued','printing') AND eject=1 ORDER BY id"
+        ).fetchall()
+        return [r["model_name"] for r in rows]
 
 
 def last_queued_job(group_id):

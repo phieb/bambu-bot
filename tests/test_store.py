@@ -53,6 +53,19 @@ def test_queued_trackers_are_watched_and_terminal(tmp_path):
     assert store.last_queued_job("group.y") is None  # not cancellable once printing
 
 
+def test_eject_tracking(tmp_path):
+    config.DB_PATH = str(tmp_path / "t.db")
+    store.init_db()
+    store.add_queued("group.x", "+1", "Deckel", 10, 2, eject=True)
+    store.add_queued("group.x", "+1", "Base", 11, 3, eject=False)
+    # per-item map for !liste annotation; names of still-ejecting jobs for !eject off
+    assert store.eject_by_item() == {2: True, 3: False}
+    assert store.queued_eject_jobs() == ["Deckel"]
+    # once a job leaves the active set it's no longer reported
+    store.set_stage(store.last_queued_job("group.x")["id"], "done")  # Base
+    assert store.queued_eject_jobs() == ["Deckel"]
+
+
 def test_discard_only_drops_open_dialog(tmp_path):
     config.DB_PATH = str(tmp_path / "t.db")
     store.init_db()
