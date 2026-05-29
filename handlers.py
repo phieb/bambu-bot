@@ -7,6 +7,7 @@ The profile and plate steps auto-skip when there's only one of each. A numbered
 reply means whatever the current stage expects, so it's dispatched on stage.
 """
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -472,15 +473,17 @@ def _plate_label(model_name, plate, multi):
     return model_name
 
 
-def _eject_filename(label, file_id):
-    """A readable ``.gcode.3mf`` name for the eject-injected re-upload, derived
-    from the user-facing label so the queue/`!liste` show the model name, not
-    ``eject_<id>``. Strips any source extension + filesystem-unsafe chars; falls
-    back to ``eject_<id>`` if nothing readable is left."""
+def _eject_filename(label, data):
+    """A ``.gcode.3mf`` name for the eject-injected re-upload: a readable base
+    from the user-facing label (so the queue/`!liste` show the model name) plus
+    a short content hash. The hash makes every distinct upload uniquely named, so
+    a stale same-named file — in Bambuddy's library OR cached on the printer's SD
+    — can never be printed in place of the freshly injected one."""
+    tag = hashlib.md5(data).hexdigest()[:8]
     base = re.sub(r"\.(gcode\.3mf|gcode|3mf|stl|zip)$", "", label.strip(), flags=re.I)
     base = re.sub(r"[^\w\s.+—-]", "", base).strip()
-    base = re.sub(r"\s+", " ", base)[:80].strip()
-    return f"{base}.gcode.3mf" if base else f"eject_{file_id}.gcode.3mf"
+    base = re.sub(r"\s+", " ", base)[:70].strip() or "eject"
+    return f"{base}_{tag}.gcode.3mf"
 
 
 async def _config(group_id, job, message):
@@ -583,7 +586,7 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
         try:
             modified = eject.inject_3mf(data, h)
             folder = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
-            up = await bambuddy.upload_library_file(modified, _eject_filename(label, file_id), folder_id=folder)
+            up = await bambuddy.upload_library_file(modified, _eject_filename(label, modified), folder_id=folder)
             queue_file_id = up.get("id") if isinstance(up, dict) else None
             if not queue_file_id:
                 raise ValueError("upload returned no id")

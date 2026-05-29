@@ -59,6 +59,20 @@ def _gcode_zip(height, plate=1):
     return buf.getvalue()
 
 
+def test_eject_filename_readable_and_unique():
+    a = handlers._eject_filename("Flexy+Luci.3mf — Body.stl", b"content-A")
+    b = handlers._eject_filename("Flexy+Luci.3mf — Body.stl", b"content-B")
+    # readable model base kept, source extension stripped, ends in .gcode.3mf
+    assert a.startswith("Flexy+Luci.3mf — Body_") and a.endswith(".gcode.3mf")
+    # same label but different content → different name (no stale-file collision)
+    assert a != b
+    # identical content → stable name
+    assert a == handlers._eject_filename("Flexy+Luci.3mf — Body.stl", b"content-A")
+    # empty/garbage label still yields a valid unique name
+    junk = handlers._eject_filename("   .stl", b"x")
+    assert junk.startswith("eject_") and junk.endswith(".gcode.3mf")
+
+
 def test_eject_command_parsing():
     assert classify.eject_command("!eject on") == "on"
     assert classify.eject_command("!eject an") == "on"
