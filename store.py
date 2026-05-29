@@ -13,7 +13,9 @@ import time
 
 import config
 
-_TERMINAL = ("queued", "done", "failed", "cancelled")
+# Stages that are NOT an open dialog: tracker rows ('queued'/'printing') and
+# terminal ones. active_job / delete_job use this to leave trackers alone.
+_TERMINAL = ("queued", "printing", "done", "failed", "cancelled")
 # Columns update_dialog may set (guards against typos / injection).
 _DIALOG_COLS = {
     "model_id", "library_file_id", "model_name", "required_colors", "ams_snapshot",
@@ -217,9 +219,11 @@ def set_stage(job_id, stage):
 
 
 def queued_jobs_with_item():
-    """Queued trackers that have a Bambuddy item id — watched for completion."""
+    """Trackers with a Bambuddy item id — watched for start ('queued') and for
+    finish ('printing', already announced as started)."""
     with _conn() as c:
         rows = c.execute(
-            "SELECT * FROM jobs WHERE stage='queued' AND queue_item_id IS NOT NULL"
+            "SELECT * FROM jobs WHERE stage IN ('queued','printing') "
+            "AND queue_item_id IS NOT NULL"
         ).fetchall()
         return [dict(r) for r in rows]

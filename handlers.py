@@ -885,7 +885,16 @@ async def _check_completions():
             store.set_stage(job["id"], "done")
             continue
         status = item.get("status")
-        if status == "completed":
+        if status == "printing" and job["stage"] != "printing":
+            # pending → printing: it just went live on the printer. Announce once,
+            # then keep watching the same tracker for completion/failure.
+            await signal_client.send_to_group(
+                job["group_id"],
+                f'🖨️ „{job["model_name"]}" druckt jetzt los! Ich sag Bescheid, wenn er fertig ist. '
+                "(!progress für Live-Status + Foto)",
+            )
+            store.set_stage(job["id"], "printing")
+        elif status == "completed":
             tail = ("Auto-Auswurf läuft — der nächste Druck startet von selbst. 🧹"
                     if store.get_flag(EJECT_FLAG, False)
                     else "Wenn die Platte frei ist: !go → nächster Druck startet.")

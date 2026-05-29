@@ -44,6 +44,14 @@ def test_queued_trackers_are_watched_and_terminal(tmp_path):
     store.set_stage(t1, "done")
     assert {j["queue_item_id"] for j in store.queued_jobs_with_item()} == {6}
 
+    # a started print ('printing') is still watched (for completion) but is no
+    # longer an open dialog and no longer the cancellable 'queued' tracker
+    t3 = store.add_queued("group.y", "+1", "Tall — PLA", 7, 8)
+    store.set_stage(t3, "printing")
+    assert 8 in {j["queue_item_id"] for j in store.queued_jobs_with_item()}
+    assert store.active_job("group.y") is None
+    assert store.last_queued_job("group.y") is None  # not cancellable once printing
+
 
 def test_discard_only_drops_open_dialog(tmp_path):
     config.DB_PATH = str(tmp_path / "t.db")
