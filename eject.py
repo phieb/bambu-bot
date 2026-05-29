@@ -30,13 +30,19 @@ MIN_SWEEP_Z = 1.5       # never bring the bed closer than this to the nozzle
 BENDER_DEEP_Z = 240.0   # >>> TUNE: bed down to flex against the bender clip (1cm less deep than 250)
 BENDER_REL_Z = 200.0    # >>> TUNE: partial lift between flexes
 BENDER_CYCLES = 3
-# >>> TUNE: X sweep lanes. Dense in the middle (where parts usually sit) so the
-# centre is fully covered by overlapping passes, then one further out each side
-# to catch off-centre parts. Bed centre is X128; ~30mm spacing in the middle.
+# >>> TUNE: X sweep lanes. The foam sweeper is ~55mm wide (±27.5mm per pass), so
+# with 30mm spacing the three middle lanes (98/128/158, bed centre X128) overlap
+# and fully cover the central band X70–186 where parts sit; one lane further out
+# each side (50/206) extends continuous coverage to X22–234 for off-centre parts.
+SWEEPER_WIDTH_MM = 55.0
 LANES_X = (50.0, 98.0, 128.0, 158.0, 206.0)
 Y_BACK = 250.0          # sweep start (rear)
 Y_FRONT = 0.0           # sweep end (front, toward the bin)
 CLEARANCE_DROP = 30.0   # bed drop (down) between lanes to reposition w/o dragging
+PARK_Z = 200.0          # neutral end rest position. Above the tallest allowed
+                        # sweep (EJECT_MAX_HEIGHT 180 − OVERSHOOT = 176), so the
+                        # final move is always downward (a still-stuck tall part
+                        # can't be rammed into the nozzle), but not bottomed out.
 SWEEP_F = 3500
 Z_F = 3000
 
@@ -85,8 +91,8 @@ def build_end_gcode(height_mm):
         out.append(f"G0 Z{z_sweep:.1f} F{Z_F} ; Bett hoch auf Greifhoehe (H-Ueberhub)")
         out.append(f"G1 Y{Y_FRONT:.1f} F{SWEEP_F} ; nach vorne schieben (+ Schwerkraft, schraeges Bett)")
     out += [
-        "; --- Park ---",
-        f"G0 Z{BENDER_DEEP_Z:.1f} F{Z_F} ; Bett runter, sicher",
+        "; --- Park (neutrale Ruheposition, immer abwaerts vom Sweep = teil-sicher) ---",
+        f"G0 Z{PARK_Z:.1f} F{Z_F} ; Bett in neutrale Ruhehoehe (nicht ganz runter)",
         # No M84 here: Bambu's P1S firmware never emits M84/M18 — its own end
         # gcode only lowers motor current with M17 and leaves the steppers
         # energised. An M84 is foreign to the P1S vocabulary and makes the

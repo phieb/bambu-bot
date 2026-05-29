@@ -180,6 +180,31 @@ def test_build_end_gcode_height_scales():
         assert f"X{x:.2f} Y{eject.Y_BACK:.1f}" in tall
 
 
+def test_build_end_gcode_parks_neutral_and_downward():
+    """The bed ends at a neutral rest height — not slammed to the bottom, but
+    above the tallest possible sweep so the final move is always downward (a
+    still-stuck tall part can't be rammed into the nozzle)."""
+    import re
+    zlines = [float(re.search(r"Z([0-9.]+)", l).group(1))
+              for l in eject.build_end_gcode(5.0).splitlines() if l.startswith("G0 Z")]
+    assert zlines[-1] == eject.PARK_Z              # ends parked at PARK_Z
+    assert eject.PARK_Z < eject.BENDER_DEEP_Z      # not bottomed out
+    # above the tallest allowed sweep (180mm print − overshoot) → always downward
+    assert eject.PARK_Z > 180 - eject.OVERSHOOT_MM
+
+
+def test_sweep_lanes_cover_centre_continuously():
+    """With the ~55mm sweeper, adjacent lanes must overlap so there are no gaps,
+    and the central band gets the dense (overlapping) coverage."""
+    h = eject.SWEEPER_WIDTH_MM / 2
+    lanes = sorted(eject.LANES_X)
+    # no gaps between adjacent lanes (centres closer than the sweeper width)
+    for a, b in zip(lanes, lanes[1:]):
+        assert (b - a) <= eject.SWEEPER_WIDTH_MM
+    # the bed centre is within the covered span
+    assert lanes[0] - h <= 128 <= lanes[-1] + h
+
+
 def test_build_end_gcode_only_p1s_safe_commands():
     """The P1S firmware rejects the whole file (HMS 0500-4003 'unable to parse')
     on a foreign command. Its own gcode never disables steppers — no M84/M18.
