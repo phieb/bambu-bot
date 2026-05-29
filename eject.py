@@ -30,7 +30,10 @@ MIN_SWEEP_Z = 1.5       # never bring the bed closer than this to the nozzle
 BENDER_DEEP_Z = 240.0   # >>> TUNE: bed down to flex against the bender clip (1cm less deep than 250)
 BENDER_REL_Z = 200.0    # >>> TUNE: partial lift between flexes
 BENDER_CYCLES = 3
-LANES_X = (20.0, 98.33, 176.66, 250.0)  # >>> TUNE: X lanes to cover the bed width
+# >>> TUNE: X sweep lanes. Dense in the middle (where parts usually sit) so the
+# centre is fully covered by overlapping passes, then one further out each side
+# to catch off-centre parts. Bed centre is X128; ~30mm spacing in the middle.
+LANES_X = (50.0, 98.0, 128.0, 158.0, 206.0)
 Y_BACK = 250.0          # sweep start (rear)
 Y_FRONT = 0.0           # sweep end (front, toward the bin)
 CLEARANCE_DROP = 30.0   # bed drop (down) between lanes to reposition w/o dragging
