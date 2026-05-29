@@ -151,12 +151,31 @@ async def file_thumbnail(library_file_id):
 
 
 async def get_gcode(library_file_id):
-    """Raw bytes of a sliced library file, or None (best-effort). For a
-    ``.gcode.3mf`` this is a zip container (the plate gcode lives inside under
-    ``Metadata/plate_*.gcode``); a plain ``.gcode`` upload is the text itself."""
+    """Bytes of a sliced library file's gcode, or None (best-effort). NOTE the
+    ``/gcode`` endpoint is *not* a stable container: for a file Bambuddy typed as
+    ``gcode`` it returns the ``.gcode.3mf`` zip, but for one typed ``3mf`` (e.g. a
+    re-sliced ``*_plate_N.gcode.3mf`` that kept its model + plate metadata) it
+    returns the *extracted* plate gcode text. Good enough for reading the height
+    (``_max_z_height`` handles both shapes); use ``download_file`` when you need
+    the real container to modify (see eject injection)."""
     try:
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.get(config.BAMBUDDY_URL + f"/api/v1/library/files/{int(library_file_id)}/gcode")
+            r.raise_for_status()
+            return r.content
+    except Exception:
+        return None
+
+
+async def download_file(library_file_id):
+    """Raw bytes of a library file as stored, or None (best-effort). Unlike
+    ``/gcode`` this always returns the actual container — for a ``.gcode.3mf``
+    that's the zip with ``Metadata/plate_*.gcode`` + its ``.md5`` inside,
+    regardless of how Bambuddy typed the file. Used by the eject injection,
+    which must rewrite the plate gcode and recompute its md5."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.get(config.BAMBUDDY_URL + f"/api/v1/library/files/{int(library_file_id)}/download")
             r.raise_for_status()
             return r.content
     except Exception:

@@ -37,9 +37,24 @@ CLEARANCE_DROP = 30.0   # bed drop (down) between lanes to reposition w/o draggi
 SWEEP_F = 3500
 Z_F = 3000
 
-PLATE_GCODE = "Metadata/plate_1.gcode"
-PLATE_MD5 = "Metadata/plate_1.gcode.md5"
+_PLATE_PREFIX = "Metadata/plate_"
+_GCODE_SUFFIX = ".gcode"
 _BLOCK_END = "; EXECUTABLE_BLOCK_END"
+
+
+def _find_plate_gcode(names):
+    """The single ``Metadata/plate_N.gcode`` member to inject into. A re-sliced
+    single-plate file keeps the source plate's index (e.g. plate 3 of a
+    multi-plate MakerWorld model → ``plate_3.gcode``), so we don't assume
+    ``plate_1``. More than one plate gcode means a still-multi-plate container,
+    which the eject path doesn't support."""
+    plates = [n for n in names
+              if n.startswith(_PLATE_PREFIX) and n.endswith(_GCODE_SUFFIX)]
+    if not plates:
+        raise ValueError("no Metadata/plate_*.gcode in container")
+    if len(plates) != 1:
+        raise ValueError(f"expected one plate gcode, found {len(plates)}: {plates}")
+    return plates[0]
 
 
 def build_end_gcode(height_mm):
@@ -83,9 +98,9 @@ def inject_3mf(data, height_mm):
         raise ValueError("not a .gcode.3mf zip container")
     zin = zipfile.ZipFile(io.BytesIO(data))
     names = zin.namelist()
-    if PLATE_GCODE not in names:
-        raise ValueError(f"{PLATE_GCODE} missing from container")
-    gtext = zin.read(PLATE_GCODE).decode("utf-8", "replace")
+    plate_gcode = _find_plate_gcode(names)
+    plate_md5 = plate_gcode + ".md5"
+    gtext = zin.read(plate_gcode).decode("utf-8", "replace")
     eject = build_end_gcode(height_mm)
     if _BLOCK_END in gtext:
         gtext = gtext.replace(_BLOCK_END, eject + _BLOCK_END, 1)
@@ -96,9 +111,9 @@ def inject_3mf(data, height_mm):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
         for n in names:
-            if n == PLATE_GCODE:
+            if n == plate_gcode:
                 zout.writestr(n, gbytes)
-            elif n == PLATE_MD5:
+            elif n == plate_md5:
                 zout.writestr(n, md5)
             else:
                 zout.writestr(n, zin.read(n))

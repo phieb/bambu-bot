@@ -43,17 +43,18 @@ def _gcode(text):
     return fake
 
 
-def _gcode_zip(height):
+def _gcode_zip(height, plate=1):
     """A .gcode.3mf-style zip blob with the plate gcode + md5 inside, like
-    Bambuddy returns for sliced library files."""
+    Bambuddy returns for sliced library files. ``plate`` lets a re-sliced file
+    keep a non-1 plate index (e.g. plate 3 of a multi-plate MakerWorld model)."""
     import hashlib
     import io
     import zipfile
     g = _GCODE_H.format(h=height).encode()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("Metadata/plate_1.gcode", g)
-        z.writestr("Metadata/plate_1.gcode.md5", hashlib.md5(g).hexdigest().upper())
+        z.writestr(f"Metadata/plate_{plate}.gcode", g)
+        z.writestr(f"Metadata/plate_{plate}.gcode.md5", hashlib.md5(g).hexdigest().upper())
         z.writestr("Metadata/project_settings.config", "{}")
     return buf.getvalue()
 
@@ -84,8 +85,8 @@ def test_gate_off_queues_without_injection(tmp_path, monkeypatch):
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
 
     async def boom(_):
-        raise AssertionError("should not fetch gcode when eject off")
-    monkeypatch.setattr(handlers.bambuddy, "get_gcode", boom)
+        raise AssertionError("should not fetch the container when eject off")
+    monkeypatch.setattr(handlers.bambuddy, "download_file", boom)
 
     queued, note = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0]))
     assert queued and note == ""
@@ -105,8 +106,9 @@ def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     _setup(tmp_path, enabled=True)
     calls, uploads = [], []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
-    # realistic: a sliced library file comes back as a .gcode.3mf zip
-    monkeypatch.setattr(handlers.bambuddy, "get_gcode", _gcode(_gcode_zip(42.0)))
+    # realistic: /download gives the .gcode.3mf container (here keeping a non-1
+    # plate index, like a re-sliced *_plate_3.gcode.3mf)
+    monkeypatch.setattr(handlers.bambuddy, "download_file", _gcode(_gcode_zip(42.0, plate=3)))
     fake_ensure, fake_upload = _capture_upload(uploads)
     monkeypatch.setattr(handlers.bambuddy, "ensure_folder", fake_ensure)
     monkeypatch.setattr(handlers.bambuddy, "upload_library_file", fake_upload)
@@ -123,10 +125,10 @@ def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     import io
     import zipfile
     z = zipfile.ZipFile(io.BytesIO(uploads[0]["content"]))
-    g = z.read("Metadata/plate_1.gcode")
+    g = z.read("Metadata/plate_3.gcode")
     assert b"Farmloop Auto-Eject" in g
     assert b"H=42.0mm" in g
-    assert z.read("Metadata/plate_1.gcode.md5").decode() == hashlib.md5(g).hexdigest().upper()
+    assert z.read("Metadata/plate_3.gcode.md5").decode() == hashlib.md5(g).hexdigest().upper()
 
 
 def test_eject_fallback_multiplate_blocked(tmp_path, monkeypatch):
@@ -135,8 +137,8 @@ def test_eject_fallback_multiplate_blocked(tmp_path, monkeypatch):
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
 
     async def boom(_):
-        raise AssertionError("should not fetch gcode for the blocked fallback path")
-    monkeypatch.setattr(handlers.bambuddy, "get_gcode", boom)
+        raise AssertionError("should not fetch the container for the blocked fallback path")
+    monkeypatch.setattr(handlers.bambuddy, "download_file", boom)
 
     queued, note = asyncio.run(
         handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3))
@@ -175,17 +177,49 @@ def test_inject_3mf_roundtrip():
     assert "Metadata/project_settings.config" in z.namelist()
 
 
+def test_inject_3mf_non_plate1_index():
+    """A re-sliced single-plate file keeps the source plate index (e.g. plate 3
+    of a multi-plate MakerWorld model). Inject into whatever plate gcode is
+    present, not a hardcoded plate_1."""
+    import hashlib
+    import io
+    import zipfile
+    out = eject.inject_3mf(_gcode_zip(80.0, plate=3), 80.0)
+    z = zipfile.ZipFile(io.BytesIO(out))
+    assert "Metadata/plate_3.gcode" in z.namelist()
+    g = z.read("Metadata/plate_3.gcode")
+    assert b"Farmloop Auto-Eject" in g
+    assert z.read("Metadata/plate_3.gcode.md5") == hashlib.md5(g).hexdigest().upper().encode()
+
+
 def test_inject_3mf_rejects_non_zip():
     import pytest
     with pytest.raises(ValueError):
         eject.inject_3mf(b"not a zip", 50.0)
 
 
+def test_inject_3mf_rejects_multiplate_container():
+    """More than one plate gcode = a still-multi-plate container; the eject path
+    can't tailor one sweep height to several plates, so refuse it."""
+    import io
+    import pytest
+    import zipfile
+    one = _gcode_zip(80.0, plate=1)
+    z1 = zipfile.ZipFile(io.BytesIO(one))
+    g = z1.read("Metadata/plate_1.gcode")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Metadata/plate_1.gcode", g)
+        z.writestr("Metadata/plate_2.gcode", g)
+    with pytest.raises(ValueError):
+        eject.inject_3mf(buf.getvalue(), 80.0)
+
+
 def test_gate_on_tall_print_blocked(tmp_path, monkeypatch):
     _setup(tmp_path, enabled=True)
     calls = []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
-    monkeypatch.setattr(handlers.bambuddy, "get_gcode", _gcode(_GCODE_H.format(h=210.0)))
+    monkeypatch.setattr(handlers.bambuddy, "download_file", _gcode(_gcode_zip(210.0)))
 
     queued, note = asyncio.run(handlers._queue_guarded("group.x", "+1", "Turm", 7, [0]))
     assert not queued and "🚫" in note
@@ -196,7 +230,7 @@ def test_gate_on_unknown_height_blocked(tmp_path, monkeypatch):
     _setup(tmp_path, enabled=True)
     calls = []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
-    monkeypatch.setattr(handlers.bambuddy, "get_gcode", _gcode(None))
+    monkeypatch.setattr(handlers.bambuddy, "download_file", _gcode(None))
 
     queued, note = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0]))
     assert not queued and "🚫" in note

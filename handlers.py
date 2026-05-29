@@ -554,7 +554,11 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
         if plate_id is not None:
             return False, ("🚫 Re-Slice fiel auf die Original-Multi-Plate-Datei zurück — mit "
                            "Auswerfer nicht sicher startbar. „!eject off“ druckt ohne Auswerfer.")
-        data = await bambuddy.get_gcode(file_id)
+        # The injection rewrites the plate gcode + its md5, so we need the actual
+        # container — /gcode isn't reliable (returns extracted text for files
+        # Bambuddy typed as 3mf, e.g. re-sliced *_plate_N.gcode.3mf). /download
+        # always gives the zip, and _max_z_height reads the height out of it.
+        data = await bambuddy.download_file(file_id)
         h = _max_z_height(data) if data else None
         if h is None:
             return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber nicht gestartet "
