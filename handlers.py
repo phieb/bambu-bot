@@ -555,18 +555,23 @@ def _max_z_height(data):
     return max(heights) if heights else None
 
 
-async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None):
+async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None,
+                         is_fallback=False):
     """Queue one sliced file, honoring the auto-eject safety gate. Returns
-    (queued, note). With eject on, a height-tailored Farmloop eject is injected
-    *into the file* (see eject.py) and the job is queued with Bambuddy's own
-    injection off — so the sweep height matches this exact print. A print taller
-    than the bender limit, one whose height can't be read, or the rare multi-plate
-    fallback path is refused, because an un-ejected plate would collide with the
-    next auto-started job. With eject off, no injection and no height limit."""
+    (queued, note). ``plate_id`` is which plate the printer should print (a
+    re-sliced single-plate file keeps the source plate's index, so it must be
+    passed or the printer defaults to plate 1 and can't parse the file).
+    ``is_fallback`` means the re-slice failed and we're queuing the *original
+    multi-plate* file — that's the only case auto-eject refuses (we can't inject
+    one plate's height-tailored eject into a multi-plate container). With eject
+    on, a height-tailored Farmloop eject is injected *into the file* (see
+    eject.py) and queued with Bambuddy's own injection off; a print taller than
+    the bender limit or one whose height can't be read is also refused. With
+    eject off, no injection and no height limit."""
     eject_on = store.get_flag(EJECT_FLAG, False)
     queue_file_id = file_id
     if eject_on:
-        if plate_id is not None:
+        if is_fallback:
             return False, ("🚫 Re-Slice fiel auf die Original-Multi-Plate-Datei zurück — mit "
                            "Auswerfer nicht sicher startbar, verworfen. Mit „!eject off“ und "
                            "erneut schicken druckt's ohne Auswerfer.")
@@ -647,10 +652,16 @@ async def _slice_all(group_id, job, decisions, plates):
                     group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
                 )
             file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
-            # A successful re-slice yields a single-plate file; only the fallback
-            # to the original multi-plate file still needs plate_id.
-            plate_id = src_plate if (file_id == item_lfid and within_file_multi) else None
-            queued, gate = await _queue_guarded(group_id, job["sender"], label, file_id, d["mapping"], plate_id)
+            # The re-slice writes the gcode under the *source* plate index
+            # (plate_N), so the printer must be told to print plate N — otherwise
+            # it defaults to plate 1, can't find matching gcode, and rejects the
+            # whole file (HMS 0500-4003). The same index also drives the fallback
+            # (original multi-plate file). zip items / single-plate stay default.
+            plate_id = src_plate if within_file_multi else None
+            is_fallback = file_id == item_lfid and within_file_multi
+            queued, gate = await _queue_guarded(
+                group_id, job["sender"], label, file_id, d["mapping"],
+                plate_id, is_fallback=is_fallback)
             if queued:
                 queued_n += 1
                 lines.append(f'✅ „{label}" — Farben {nums}{note}')

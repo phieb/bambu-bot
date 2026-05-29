@@ -22,7 +22,7 @@ def _setup(tmp_path, enabled):
 
 def _fake_queue(calls):
     async def fake(file_id, mapping, plate_id=None, gcode_injection=True):
-        calls.append({"file_id": file_id, "inject": gcode_injection})
+        calls.append({"file_id": file_id, "inject": gcode_injection, "plate_id": plate_id})
         return {"id": 999}
     return fake
 
@@ -102,9 +102,10 @@ def test_gate_off_queues_without_injection(tmp_path, monkeypatch):
         raise AssertionError("should not fetch the container when eject off")
     monkeypatch.setattr(handlers.bambuddy, "download_file", boom)
 
-    queued, note = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0]))
+    queued, note = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=2))
     assert queued and note == ""
-    assert calls == [{"file_id": 7, "inject": False}]
+    # eject off: queue the file as-is, passing the plate index straight through
+    assert calls == [{"file_id": 7, "inject": False, "plate_id": 2}]
 
 
 def test_max_z_height_reads_zip_and_plain():
@@ -127,11 +128,14 @@ def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     monkeypatch.setattr(handlers.bambuddy, "ensure_folder", fake_ensure)
     monkeypatch.setattr(handlers.bambuddy, "upload_library_file", fake_upload)
 
-    queued, _ = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0]))
+    # a successful multi-plate re-slice passes plate_id (here 3); eject must still
+    # inject (not refuse — that's only the is_fallback case)
+    queued, _ = asyncio.run(
+        handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3))
     assert queued
     # the eject is injected into a re-uploaded file; that new file is queued with
-    # Bambuddy's own injection OFF (we did the injection ourselves)
-    assert calls == [{"file_id": 555, "inject": False}]
+    # Bambuddy's own injection OFF (we did it) and the plate index forwarded
+    assert calls == [{"file_id": 555, "inject": False, "plate_id": 3}]
     assert len(uploads) == 1
     assert uploads[0]["filename"].endswith(".gcode.3mf")
     # the re-uploaded container actually carries the height-tailored eject + valid md5
@@ -154,8 +158,10 @@ def test_eject_fallback_multiplate_blocked(tmp_path, monkeypatch):
         raise AssertionError("should not fetch the container for the blocked fallback path")
     monkeypatch.setattr(handlers.bambuddy, "download_file", boom)
 
+    # is_fallback = re-slice failed, we'd queue the original multi-plate file →
+    # auto-eject refuses (can't inject one plate's eject into a multi-plate file)
     queued, note = asyncio.run(
-        handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3))
+        handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3, is_fallback=True))
     assert not queued and "🚫" in note
     assert calls == []
 
