@@ -192,6 +192,28 @@ def test_inject_3mf_non_plate1_index():
     assert z.read("Metadata/plate_3.gcode.md5") == hashlib.md5(g).hexdigest().upper().encode()
 
 
+def test_inject_3mf_preserves_compression():
+    """The slicer STOREs embedded PNGs/thumbnails; the P1S preview parser rejects
+    the file if we re-DEFLATE them. Each member must keep its source compress_type
+    (only the gcode + md5 change)."""
+    import hashlib
+    import io
+    import zipfile
+    g = _GCODE_H.format(h=20.0).encode()
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 500  # incompressible-ish dummy
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Metadata/plate_1.gcode", g, zipfile.ZIP_DEFLATED)
+        z.writestr("Metadata/plate_1.gcode.md5", hashlib.md5(g).hexdigest().upper(), zipfile.ZIP_DEFLATED)
+        z.writestr("Metadata/plate_1.png", png, zipfile.ZIP_STORED)
+    out = eject.inject_3mf(buf.getvalue(), 20.0)
+    zo = zipfile.ZipFile(io.BytesIO(out))
+    info = {i.filename: i for i in zo.infolist()}
+    assert info["Metadata/plate_1.png"].compress_type == zipfile.ZIP_STORED
+    assert info["Metadata/plate_1.gcode"].compress_type == zipfile.ZIP_DEFLATED
+    assert zo.read("Metadata/plate_1.png") == png  # bytes untouched
+
+
 def test_inject_3mf_rejects_non_zip():
     import pytest
     with pytest.raises(ValueError):

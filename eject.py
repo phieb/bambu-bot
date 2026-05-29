@@ -97,24 +97,32 @@ def inject_3mf(data, height_mm):
     if data[:2] != b"PK":
         raise ValueError("not a .gcode.3mf zip container")
     zin = zipfile.ZipFile(io.BytesIO(data))
-    names = zin.namelist()
-    plate_gcode = _find_plate_gcode(names)
+    infos = zin.infolist()
+    plate_gcode = _find_plate_gcode([i.filename for i in infos])
     plate_md5 = plate_gcode + ".md5"
-    gtext = zin.read(plate_gcode).decode("utf-8", "replace")
-    eject = build_end_gcode(height_mm)
-    if _BLOCK_END in gtext:
-        gtext = gtext.replace(_BLOCK_END, eject + _BLOCK_END, 1)
+    # Work on raw bytes, not decoded text: the gcode is normally ASCII but a
+    # lossy decode/encode round-trip must never silently alter it.
+    gbytes = zin.read(plate_gcode)
+    eject = build_end_gcode(height_mm).encode("utf-8")
+    marker = _BLOCK_END.encode("ascii")
+    idx = gbytes.find(marker)
+    if idx != -1:
+        gbytes = gbytes[:idx] + eject + gbytes[idx:]
     else:
-        gtext = gtext.rstrip("\n") + "\n" + eject
-    gbytes = gtext.encode("utf-8")
+        gbytes = gbytes.rstrip(b"\n") + b"\n" + eject
     md5 = hashlib.md5(gbytes).hexdigest().upper().encode("ascii")
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
-        for n in names:
-            if n == plate_gcode:
-                zout.writestr(n, gbytes)
-            elif n == plate_md5:
-                zout.writestr(n, md5)
+    with zipfile.ZipFile(buf, "w") as zout:
+        for zi in infos:
+            if zi.filename == plate_gcode:
+                payload = gbytes
+            elif zi.filename == plate_md5:
+                payload = md5
             else:
-                zout.writestr(n, zin.read(n))
+                payload = zin.read(zi.filename)
+            # Reuse the source ZipInfo so each member keeps its original
+            # compression (the slicer STOREs the embedded PNGs/thumbnails; the
+            # P1S preview parser chokes if we re-DEFLATE them) and metadata. Only
+            # the gcode + its md5 change.
+            zout.writestr(zi, payload)
     return buf.getvalue()
