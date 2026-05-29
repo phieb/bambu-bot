@@ -2,6 +2,9 @@
 import os
 
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://bambuddy:8010")
+# OrcaSlicer/Bambu-Studio sidecar (the real slicer) — called directly to slice
+# files Bambuddy's own slice rejects (e.g. multi-plate 3mf with off-bed objects).
+SLICER_URL = os.environ.get("SLICER_URL", "http://192.168.178.116:3001")
 SIGNAL_URL = os.environ.get("SIGNAL_URL", "http://signal-api:8080")
 BOT_NUMBER = os.environ.get("SIGNAL_BOT_NUMBER", "")
 DB_PATH = os.environ.get("DB_PATH", "/data/bambu.db")

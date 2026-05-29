@@ -23,6 +23,7 @@ import config
 import eject
 import signal_client
 import slicing
+import slicer
 import stl
 import store
 import swatch
@@ -723,11 +724,10 @@ async def _slice_all(group_id, job, decisions, plates):
                     group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
                 )
             file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
-            # The re-slice writes the gcode under the *source* plate index
-            # (plate_N), so the printer must be told to print plate N — otherwise
-            # it defaults to plate 1, can't find matching gcode, and rejects the
-            # whole file (HMS 0500-4003). The same index also drives the fallback
-            # (original multi-plate file). zip items / single-plate stay default.
+            # A re-slice (Bambuddy or sidecar) writes the gcode under the *source*
+            # plate index (plate_N) → tell the printer to print plate N, else it
+            # defaults to 1, finds no gcode and rejects the file (HMS 0500-4003).
+            # Same index drives the original-file fallback. zip/single stay default.
             plate_id = src_plate if within_file_multi else None
             is_fallback = file_id == item_lfid and within_file_multi
             queued, gate = await _queue_guarded(
@@ -753,8 +753,10 @@ async def _slice_all(group_id, job, decisions, plates):
 async def _reslice(library_file_id, required, ams, mapping, plate=None):
     """Re-slice the imported file (one plate) for the target printer so it doesn't
     print with the MakerWorld profile's machine slice (e.g. X1C on a P1S). Returns
-    (file_id_to_queue, note). On any miss, falls back to the original file so a
-    print is never lost — the note flags it."""
+    (file_id_to_queue, note). If Bambuddy's slice fails (e.g. a multi-plate 3mf
+    whose objects sit off-bed → "object conflicts"), fall back to slicing the plate
+    directly on the slicer sidecar. On any miss, falls back to the original file so
+    a print is never lost — the note flags it."""
     try:
         presets = await bambuddy.get_presets()
         try:
@@ -782,10 +784,34 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None):
         new_id = await _await_slice((started or {}).get("job_id"))
         if new_id:
             return new_id, f" · ♻️ für {config.PRINTER_MODEL} neu geslict"
+        # Bambuddy's slice failed — typically a multi-plate 3mf whose objects sit
+        # off-bed ("object conflicts"). Slice the plate straight on the real
+        # slicer sidecar with bundled P1S profiles, which handles it.
+        side_id = await _reslice_via_sidecar(library_file_id, plate, ams, mapping)
+        if side_id:
+            return side_id, f" · ♻️ über Slicer-Sidecar für {config.PRINTER_MODEL} geslict"
         return library_file_id, " · ⚠️ Re-Slice fehlgeschlagen, drucke Original"
     except Exception:
         log.exception("reslice failed")
         return library_file_id, " · ⚠️ Re-Slice fehlgeschlagen, drucke Original"
+
+
+async def _reslice_via_sidecar(lfid, plate, ams, mapping):
+    """Slice plate ``plate`` of a 3mf directly on the slicer sidecar (bundled P1S
+    printer + a filament profile matched to the mapped AMS slot) and upload the
+    result to Bambuddy. Returns the new library_file_id, or None. Used when
+    Bambuddy's own slice can't handle the file (off-bed multi-plate objects)."""
+    data = await bambuddy.download_file(lfid)
+    if not data:
+        return None
+    tray = next((a for a in ams if a["tray_id"] == mapping[0]), {}) if mapping else {}
+    fil = slicer.filament_profile(tray.get("type"), tray.get("sub"))
+    sliced = await slicer.slice_3mf(data, plate=plate or 1, filament=fil)
+    if not sliced:
+        return None
+    folder = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
+    up = await bambuddy.upload_library_file(sliced, f"sliced_plate{plate or 1}.gcode.3mf", folder_id=folder)
+    return up.get("id") if isinstance(up, dict) else None
 
 
 async def _await_slice(job_id, timeout=300, interval=4):
