@@ -89,9 +89,17 @@ def test_sliced_printer_model():
     assert handlers._sliced_printer_model(_slice_info_zip("N1")) == "N1"   # A1 mini
     assert handlers._sliced_printer_model(_slice_info_zip("")) == ""        # sidecar P1S
     assert handlers._sliced_printer_model(b"plain gcode") == ""
-    # the incompatible set catches the A-series bed-slingers
-    assert "N1" in handlers._INCOMPATIBLE_MODELS and "N2S" in handlers._INCOMPATIBLE_MODELS
-    assert "C12" not in handlers._INCOMPATIBLE_MODELS  # P1S itself is fine
+    # this printer's id resolves from config (P1S -> C12)
+    assert handlers._TARGET_MODEL_ID == "C12"
+
+    # the queue gate (strict allow-list): accept ONLY gcode identified as this
+    # printer; reject foreign, unknown, AND unverifiable (raw .gcode / blank id)
+    def rejected(model):
+        return model != handlers._TARGET_MODEL_ID
+    assert rejected("N1") and rejected("N2S")  # A1 mini / A1
+    assert rejected("ZZ-NEW")                  # unknown non-blank
+    assert rejected("")                        # raw .gcode / blank id → blocked too
+    assert not rejected("C12")                 # the P1S itself → accepted
 
 
 def test_gcode_plate_index():

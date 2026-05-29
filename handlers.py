@@ -308,17 +308,24 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
         if kind == "gcode":
             # Already sliced for a machine — queue as-is, no color dialog.
             store.delete_job(job_id)
-            # Reject gcode sliced for an incompatible printer (e.g. an A1/A1 mini
-            # bed-slinger) before it reaches the P1S — different bed/kinematics/
-            # macros mean it won't print and usually won't even parse.
+            # Accept gcode ONLY if it's positively identified as sliced for this
+            # printer (allow-list). Wrong-printer gcode can misbehave badly on the
+            # P1S, and raw .gcode / blank-id files carry no printer info to check
+            # — so reject anything we can't confirm is for the P1S. A P1S-sliced
+            # .gcode.3mf carries the matching id and passes.
             model = _sliced_printer_model(content)
-            if model in _INCOMPATIBLE_MODELS:
+            if model != _TARGET_MODEL_ID:
+                if model:
+                    for_what = _PRINTER_NAMES.get(model) or f"ein anderes Geraet (ID {model})"
+                    why = (f'ist für **{for_what}** geslict, nicht für den {config.PRINTER_MODEL}')
+                else:
+                    why = (f'ist rohes/ungeprüftes G-Code — ich kann nicht erkennen, für welchen '
+                           f'Drucker es geslict wurde, und falscher G-Code kann den '
+                           f'{config.PRINTER_MODEL} beschädigen')
                 await signal_client.send_to_group(
                     group_id,
-                    f'🚫 „{name}" ist für **{_PRINTER_NAMES.get(model, model)}** geslict, '
-                    f'nicht für den {config.PRINTER_MODEL} — das druckt der {config.PRINTER_MODEL} '
-                    f'nicht. Bitte in Bambu Studio für den {config.PRINTER_MODEL} neu slicen, oder '
-                    'schick die .3mf/.stl, dann slice ich es selbst passend.')
+                    f'🚫 „{name}" {why}. Bitte in Bambu Studio für den {config.PRINTER_MODEL} '
+                    'slicen, oder schick die .3mf/.stl, dann slice ich es selbst passend.')
                 return
             # A .gcode.3mf can hold its gcode under a non-1 plate index (e.g. a
             # single plate from a multi-plate project), so tell the printer which
@@ -597,9 +604,8 @@ def _gcode_plate_index(data):
 # Bambu printer model ids as written to slice_info.config (printer_model_id).
 _PRINTER_NAMES = {"N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S",
                   "BL-P001": "X1C", "BL-P002": "X1", "C13": "X1E"}
-# Models whose gcode the P1S can't run — the A-series are bed-slingers (different
-# kinematics, bed size, machine macros) → the file won't print / won't parse.
-_INCOMPATIBLE_MODELS = {"N1", "N2S"}
+_MODEL_IDS = {name: mid for mid, name in _PRINTER_NAMES.items()}  # name -> id
+_TARGET_MODEL_ID = _MODEL_IDS.get(config.PRINTER_MODEL)  # e.g. "P1S" -> "C12"
 _MODEL_ID_RE = re.compile(r'printer_model_id"\s*value="([^"]*)"')
 
 
