@@ -553,7 +553,8 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
     if eject_on:
         if plate_id is not None:
             return False, ("🚫 Re-Slice fiel auf die Original-Multi-Plate-Datei zurück — mit "
-                           "Auswerfer nicht sicher startbar. „!eject off“ druckt ohne Auswerfer.")
+                           "Auswerfer nicht sicher startbar, verworfen. Mit „!eject off“ und "
+                           "erneut schicken druckt's ohne Auswerfer.")
         # The injection rewrites the plate gcode + its md5, so we need the actual
         # container — /gcode isn't reliable (returns extracted text for files
         # Bambuddy typed as 3mf, e.g. re-sliced *_plate_N.gcode.3mf). /download
@@ -561,11 +562,13 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
         data = await bambuddy.download_file(file_id)
         h = _max_z_height(data) if data else None
         if h is None:
-            return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber nicht gestartet "
-                           "(Auswerfer an). „!eject off“ druckt ohne Auswerfer.")
+            return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber verworfen "
+                           "(Auswerfer an). Mit „!eject off“ und erneut schicken druckt's "
+                           "ohne Auswerfer.")
         if h > config.EJECT_MAX_HEIGHT_MM:
             return False, (f"🚫 {h:.0f} mm hoch, max {config.EJECT_MAX_HEIGHT_MM:.0f} mm mit "
-                           "Auswerfer (sonst fährt das Bett in den Bender). Tools ab + „!eject off“.")
+                           "Auswerfer (sonst fährt das Bett in den Bender) — verworfen. Tools ab, "
+                           "oder „!eject off“ und erneut schicken.")
         try:
             modified = eject.inject_3mf(data, h)
             folder = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
@@ -575,8 +578,8 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
                 raise ValueError("upload returned no id")
         except Exception:
             log.exception("eject injection failed")
-            return False, ("🚫 Eject-Gcode bauen fehlgeschlagen — nicht gestartet. "
-                           "„!eject off“ druckt ohne Auswerfer.")
+            return False, ("🚫 Eject-Gcode bauen fehlgeschlagen — verworfen. Mit „!eject off“ "
+                           "und erneut schicken druckt's ohne Auswerfer.")
     resp = await bambuddy.queue(queue_file_id, mapping, plate_id=plate_id, gcode_injection=False)
     item_id = resp.get("id") if isinstance(resp, dict) else None
     store.add_queued(group_id, sender, label, queue_file_id, item_id)
