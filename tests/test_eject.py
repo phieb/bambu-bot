@@ -73,6 +73,27 @@ def test_eject_filename_readable_and_unique():
     assert junk.startswith("eject_") and junk.endswith(".gcode.3mf")
 
 
+def _slice_info_zip(model_id):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Metadata/plate_1.gcode", b"; gcode")
+        z.writestr("Metadata/slice_info.config",
+                   f'<config><plate><metadata key="printer_model_id" value="{model_id}"/>'
+                   '</plate></config>')
+    return buf.getvalue()
+
+
+def test_sliced_printer_model():
+    assert handlers._sliced_printer_model(_slice_info_zip("N1")) == "N1"   # A1 mini
+    assert handlers._sliced_printer_model(_slice_info_zip("")) == ""        # sidecar P1S
+    assert handlers._sliced_printer_model(b"plain gcode") == ""
+    # the incompatible set catches the A-series bed-slingers
+    assert "N1" in handlers._INCOMPATIBLE_MODELS and "N2S" in handlers._INCOMPATIBLE_MODELS
+    assert "C12" not in handlers._INCOMPATIBLE_MODELS  # P1S itself is fine
+
+
 def test_gcode_plate_index():
     # a single-plate .gcode.3mf under a non-1 index → that index must be queued
     assert handlers._gcode_plate_index(_gcode_zip(20.0, plate=2)) == 2

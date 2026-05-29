@@ -306,12 +306,24 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
         uploaded = await bambuddy.upload_library_file(content, name, folder_id)
         lfid = uploaded["id"]
         if kind == "gcode":
-            # Already sliced for a machine — queue as-is, no color dialog. A
-            # .gcode.3mf can hold its gcode under a non-1 plate index (e.g. a
-            # single plate exported from a multi-plate Studio project), so tell
-            # the printer which plate to print or it defaults to 1, finds no
-            # gcode there, and rejects the file (HMS 0500-4003).
+            # Already sliced for a machine — queue as-is, no color dialog.
             store.delete_job(job_id)
+            # Reject gcode sliced for an incompatible printer (e.g. an A1/A1 mini
+            # bed-slinger) before it reaches the P1S — different bed/kinematics/
+            # macros mean it won't print and usually won't even parse.
+            model = _sliced_printer_model(content)
+            if model in _INCOMPATIBLE_MODELS:
+                await signal_client.send_to_group(
+                    group_id,
+                    f'🚫 „{name}" ist für **{_PRINTER_NAMES.get(model, model)}** geslict, '
+                    f'nicht für den {config.PRINTER_MODEL} — das druckt der {config.PRINTER_MODEL} '
+                    f'nicht. Bitte in Bambu Studio für den {config.PRINTER_MODEL} neu slicen, oder '
+                    'schick die .3mf/.stl, dann slice ich es selbst passend.')
+                return
+            # A .gcode.3mf can hold its gcode under a non-1 plate index (e.g. a
+            # single plate from a multi-plate project), so tell the printer which
+            # plate to print or it defaults to 1, finds no gcode, and rejects the
+            # file (HMS 0500-4003).
             plate_id = _gcode_plate_index(content)
             queued, note = await _queue_guarded(group_id, sender, name, lfid, [], plate_id=plate_id)
             await signal_client.send_to_group(
@@ -582,6 +594,32 @@ def _gcode_plate_index(data):
     return int(m.group(1)) if m else None
 
 
+# Bambu printer model ids as written to slice_info.config (printer_model_id).
+_PRINTER_NAMES = {"N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S",
+                  "BL-P001": "X1C", "BL-P002": "X1", "C13": "X1E"}
+# Models whose gcode the P1S can't run — the A-series are bed-slingers (different
+# kinematics, bed size, machine macros) → the file won't print / won't parse.
+_INCOMPATIBLE_MODELS = {"N1", "N2S"}
+_MODEL_ID_RE = re.compile(r'printer_model_id"\s*value="([^"]*)"')
+
+
+def _sliced_printer_model(data):
+    """The printer_model_id a pre-sliced ``.gcode.3mf`` was sliced for (from
+    slice_info.config), or '' if unknown (our own sidecar slice leaves it blank).
+    Used to catch a file sliced for the wrong machine before it hits the bed."""
+    if not data or data[:2] != b"PK":
+        return ""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        for n in z.namelist():
+            if n.endswith("slice_info.config"):
+                m = _MODEL_ID_RE.search(z.read(n).decode("utf-8", "replace"))
+                return (m.group(1) if m else "").strip()
+    except zipfile.BadZipFile:
+        pass
+    return ""
+
+
 async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None,
                          is_fallback=False):
     """Queue one sliced file, honoring the auto-eject safety gate. Returns
@@ -766,6 +804,8 @@ _STATUS_EMOJI = {
     "pending": "⏳", "printing": "🖨️", "completed": "✅",
     "failed": "❌", "skipped": "⏭️", "cancelled": "🚫",
 }
+# Finished statuses hidden from !liste — they just pile up and clutter the view.
+_DONE_QUEUE_STATUS = {"completed", "cancelled", "skipped"}
 
 
 async def _skip(group_id):
@@ -846,16 +886,18 @@ async def _cancel(group_id):
 
 async def _list(group_id):
     items = await bambuddy.list_queue()
-    if not items:
-        await signal_client.send_to_group(group_id, "📋 Queue ist leer.")
+    open_items = [it for it in (items or [])
+                  if (it.get("status") or "").lower() not in _DONE_QUEUE_STATUS]
+    if not open_items:
+        await signal_client.send_to_group(group_id, "📋 Keine offenen Drucke in der Queue.")
         return
     lines = []
-    for i, it in enumerate(items, 1):
+    for i, it in enumerate(open_items, 1):
         nm = (it.get("library_file_name") or it.get("archive_name")
               or it.get("target_model") or f'#{it.get("id")}')
         st = it.get("status") or "?"
         lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st})'.replace("  ", " "))
-    await signal_client.send_to_group(group_id, "📋 Queue:\n" + "\n".join(lines))
+    await signal_client.send_to_group(group_id, "📋 Queue (offen):\n" + "\n".join(lines))
 
 
 _ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"}
