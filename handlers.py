@@ -878,6 +878,16 @@ async def poll_completions(interval=60):
 
 
 async def _check_completions():
+    # Bambuddy flips a queue item to 'printing' the moment it *dispatches* it —
+    # optimistically, before the machine confirms. If the printer can't actually
+    # start (e.g. an HMS error), the item still reads 'printing'. So we only
+    # announce a start when the printer itself reports an active state.
+    try:
+        pstatus = await bambuddy.printer_status(config.PRINTER_ID)
+    except Exception:
+        log.warning("printer status fetch failed in completion poll", exc_info=True)
+        pstatus = None
+    printer_active = bool(pstatus) and (pstatus.get("state") or "").upper() in _ACTIVE_STATES
     for job in store.queued_jobs_with_item():
         item = await bambuddy.get_queue_item(job["queue_item_id"])
         if item is None:
@@ -886,8 +896,10 @@ async def _check_completions():
             continue
         status = item.get("status")
         if status == "printing" and job["stage"] != "printing":
-            # pending → printing: it just went live on the printer. Announce once,
-            # then keep watching the same tracker for completion/failure.
+            # pending → printing, but only believe it once the machine is really
+            # running — otherwise re-check next poll (no premature/false start).
+            if not printer_active:
+                continue
             await signal_client.send_to_group(
                 job["group_id"],
                 f'🖨️ „{job["model_name"]}" druckt jetzt los! Ich sag Bescheid, wenn er fertig ist. '

@@ -51,18 +51,31 @@ def test_completion_watch_announces_start_then_finish(tmp_path, monkeypatch):
                         lambda gid, msg, **kw: sent.append(msg) or _none())
 
     item = {"status": "pending"}
+    printer = {"state": "RUNNING"}
 
     async def _get_item(_id):
         return item
+
+    async def _pstatus(_pid):
+        return printer
     monkeypatch.setattr(handlers.bambuddy, "get_queue_item", _get_item)
+    monkeypatch.setattr(handlers.bambuddy, "printer_status", _pstatus)
 
     # still pending → no message, still 'queued'
     asyncio.run(handlers._check_completions())
     assert sent == []
     assert store.queued_jobs_with_item()[0]["stage"] == "queued"
 
-    # goes live → exactly one "started" message, stage flips to 'printing'
+    # Bambuddy flips the item to 'printing' but the machine isn't actually running
+    # (e.g. blocked by an HMS error) → DON'T announce, stay 'queued'
     item["status"] = "printing"
+    printer["state"] = "IDLE"
+    asyncio.run(handlers._check_completions())
+    assert sent == []
+    assert store.queued_jobs_with_item()[0]["stage"] == "queued"
+
+    # machine really running → exactly one "started" message, stage → 'printing'
+    printer["state"] = "RUNNING"
     asyncio.run(handlers._check_completions())
     assert len(sent) == 1 and "druckt jetzt" in sent[0]
     assert store.queued_jobs_with_item()[0]["stage"] == "printing"
