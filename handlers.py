@@ -472,6 +472,17 @@ def _plate_label(model_name, plate, multi):
     return model_name
 
 
+def _eject_filename(label, file_id):
+    """A readable ``.gcode.3mf`` name for the eject-injected re-upload, derived
+    from the user-facing label so the queue/`!liste` show the model name, not
+    ``eject_<id>``. Strips any source extension + filesystem-unsafe chars; falls
+    back to ``eject_<id>`` if nothing readable is left."""
+    base = re.sub(r"\.(gcode\.3mf|gcode|3mf|stl|zip)$", "", label.strip(), flags=re.I)
+    base = re.sub(r"[^\w\s.+—-]", "", base).strip()
+    base = re.sub(r"\s+", " ", base)[:80].strip()
+    return f"{base}.gcode.3mf" if base else f"eject_{file_id}.gcode.3mf"
+
+
 async def _config(group_id, job, message):
     """Record the color choice for the current plate. Ask the next plate's colors
     if any are still pending; once every selected plate has its colors, slice +
@@ -572,7 +583,7 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
         try:
             modified = eject.inject_3mf(data, h)
             folder = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
-            up = await bambuddy.upload_library_file(modified, f"eject_{file_id}.gcode.3mf", folder_id=folder)
+            up = await bambuddy.upload_library_file(modified, _eject_filename(label, file_id), folder_id=folder)
             queue_file_id = up.get("id") if isinstance(up, dict) else None
             if not queue_file_id:
                 raise ValueError("upload returned no id")
