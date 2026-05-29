@@ -41,6 +41,14 @@ async def _none():
     return None
 
 
+def test_eta_phrase():
+    assert handlers._eta_phrase(None) == ""
+    assert handlers._eta_phrase(0) == ""
+    assert handlers._eta_phrase(45).endswith("(in ~45 min).")  # no hour component
+    p = handlers._eta_phrase(135)
+    assert "2 h 15 min" in p and "Fertig ca." in p and "Uhr" in p
+
+
 def test_completion_watch_announces_start_then_finish(tmp_path, monkeypatch):
     config.DB_PATH = str(tmp_path / "t.db")
     store.init_db()
@@ -51,7 +59,7 @@ def test_completion_watch_announces_start_then_finish(tmp_path, monkeypatch):
                         lambda gid, msg, **kw: sent.append(msg) or _none())
 
     item = {"status": "pending"}
-    printer = {"state": "RUNNING"}
+    printer = {"state": "RUNNING", "remaining_time": 135}  # 2 h 15 min
 
     async def _get_item(_id):
         return item
@@ -74,10 +82,12 @@ def test_completion_watch_announces_start_then_finish(tmp_path, monkeypatch):
     assert sent == []
     assert store.queued_jobs_with_item()[0]["stage"] == "queued"
 
-    # machine really running → exactly one "started" message, stage → 'printing'
+    # machine really running → exactly one "started" message with an ETA,
+    # stage → 'printing'
     printer["state"] = "RUNNING"
     asyncio.run(handlers._check_completions())
     assert len(sent) == 1 and "druckt jetzt" in sent[0]
+    assert "Fertig ca." in sent[0] and "2 h 15 min" in sent[0]
     assert store.queued_jobs_with_item()[0]["stage"] == "printing"
 
     # still printing on the next poll → no duplicate ping

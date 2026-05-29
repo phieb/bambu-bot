@@ -7,6 +7,7 @@ The profile and plate steps auto-skip when there's only one of each. A numbered
 reply means whatever the current stage expects, so it's dispatched on stage.
 """
 import asyncio
+import datetime
 import hashlib
 import io
 import json
@@ -880,6 +881,19 @@ async def poll_completions(interval=60):
         await asyncio.sleep(interval)
 
 
+def _eta_phrase(remaining_min):
+    """' Fertig ca. 15:26 Uhr (in ~2 h 15 min).' from the printer's remaining
+    minutes, or '' if it isn't known yet. Clock time is the container's local
+    time (CEST), which matches the printer's locale."""
+    if not remaining_min or remaining_min <= 0:
+        return ""
+    rem = int(remaining_min)
+    h, m = divmod(rem, 60)
+    dur = f"{h} h {m} min" if h else f"{m} min"
+    clock = (datetime.datetime.now() + datetime.timedelta(minutes=rem)).strftime("%H:%M")
+    return f" Fertig ca. {clock} Uhr (in ~{dur})."
+
+
 async def _check_completions():
     # Bambuddy flips a queue item to 'printing' the moment it *dispatches* it —
     # optimistically, before the machine confirms. If the printer can't actually
@@ -905,8 +919,9 @@ async def _check_completions():
                 continue
             await signal_client.send_to_group(
                 job["group_id"],
-                f'🖨️ „{job["model_name"]}" druckt jetzt los! Ich sag Bescheid, wenn er fertig ist. '
-                "(!progress für Live-Status + Foto)",
+                f'🖨️ „{job["model_name"]}" druckt jetzt los!'
+                f'{_eta_phrase(pstatus.get("remaining_time"))} '
+                "Ich sag Bescheid, wenn er fertig ist. (!progress für Live-Status + Foto)",
             )
             store.set_stage(job["id"], "printing")
         elif status == "completed":
