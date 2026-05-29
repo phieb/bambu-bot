@@ -84,8 +84,11 @@ def build_end_gcode(height_mm):
     out += [
         "; --- Park ---",
         f"G0 Z{BENDER_DEEP_Z:.1f} F{Z_F} ; Bett runter, sicher",
-        "M84 ; Motoren aus",
-        "; ===== Eject Ende =====",
+        # No M84 here: Bambu's P1S firmware never emits M84/M18 — its own end
+        # gcode only lowers motor current with M17 and leaves the steppers
+        # energised. An M84 is foreign to the P1S vocabulary and makes the
+        # printer reject the whole file at load (HMS 0500-4003 "unable to parse").
+        "; ===== Eject Ende (Motoren bleiben an, wie bei Bambus P1S-End) =====",
     ]
     return "\n".join(out) + "\n"
 

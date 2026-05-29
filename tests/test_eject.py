@@ -174,6 +174,20 @@ def test_build_end_gcode_height_scales():
         assert f"X{x:.2f} Y{eject.Y_BACK:.1f}" in tall
 
 
+def test_build_end_gcode_only_p1s_safe_commands():
+    """The P1S firmware rejects the whole file (HMS 0500-4003 'unable to parse')
+    on a foreign command. Its own gcode never disables steppers — no M84/M18.
+    Guard against reintroducing one. Every command must be P1S-native."""
+    import re
+    gc = eject.build_end_gcode(40.0)
+    used = {re.match(r"^([GMT]\d+(?:\.\d+)?)", l.split(";", 1)[0].strip()).group(1)
+            for l in gc.splitlines()
+            if re.match(r"^([GMT]\d+(?:\.\d+)?)", l.split(";", 1)[0].strip())}
+    assert "M84" not in used and "M18" not in used
+    # whitelist of commands Bambu's own P1S slices emit
+    assert used <= {"G0", "G1", "G90", "M17", "M104", "M140"}
+
+
 def test_inject_3mf_roundtrip():
     import hashlib
     import io
