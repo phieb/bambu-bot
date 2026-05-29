@@ -27,7 +27,7 @@ OVERSHOOT_MM = 4.0      # >>> TUNE: bed sits this much higher than the print top
                         # the foam grabs the part body. Bigger = more bite + more
                         # of the part pokes above the nozzle plane (toward gantry).
 MIN_SWEEP_Z = 1.5       # never bring the bed closer than this to the nozzle
-BENDER_DEEP_Z = 250.0   # >>> TUNE: bed fully down to flex against the bender clip
+BENDER_DEEP_Z = 240.0   # >>> TUNE: bed down to flex against the bender clip (1cm less deep than 250)
 BENDER_REL_Z = 200.0    # >>> TUNE: partial lift between flexes
 BENDER_CYCLES = 3
 LANES_X = (20.0, 98.33, 176.66, 250.0)  # >>> TUNE: X lanes to cover the bed width
