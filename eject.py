@@ -93,6 +93,12 @@ def build_end_gcode(height_mm):
     out += [
         "; --- Park (neutrale Ruheposition, immer abwaerts vom Sweep = teil-sicher) ---",
         f"G0 Z{PARK_Z:.1f} F{Z_F} ; Bett in neutrale Ruhehoehe (nicht ganz runter)",
+        # Home XY so the toolhead/bed are at a known reference for the NEXT print's
+        # start gcode — leaving them at the sweep end-position confused the start.
+        # 'G28 X' re-homes X+Y on Bambu (its own gcode uses exactly that); done
+        # with the bed parked low, so the toolhead sweeps clear of any part. Z is
+        # left parked — the next print's start gcode re-homes Z itself.
+        "G28 X ; Druckkopf homen (XY) — sauberer Startpunkt fuer den naechsten Druck",
         # No M84 here: Bambu's P1S firmware never emits M84/M18 — its own end
         # gcode only lowers motor current with M17 and leaves the steppers
         # energised. An M84 is foreign to the P1S vocabulary and makes the

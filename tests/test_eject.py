@@ -224,8 +224,8 @@ def test_build_end_gcode_only_p1s_safe_commands():
             for l in gc.splitlines()
             if re.match(r"^([GMT]\d+(?:\.\d+)?)", l.split(";", 1)[0].strip())}
     assert "M84" not in used and "M18" not in used
-    # whitelist of commands Bambu's own P1S slices emit
-    assert used <= {"G0", "G1", "G90", "M17", "M104", "M140"}
+    # whitelist of commands Bambu's own P1S slices emit (incl. G28 for homing)
+    assert used <= {"G0", "G1", "G28", "G90", "M17", "M104", "M140"}
 
 
 def test_inject_3mf_roundtrip():
