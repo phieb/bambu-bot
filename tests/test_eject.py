@@ -73,6 +73,15 @@ def test_eject_filename_readable_and_unique():
     assert junk.startswith("eject_") and junk.endswith(".gcode.3mf")
 
 
+def test_gcode_plate_index():
+    # a single-plate .gcode.3mf under a non-1 index → that index must be queued
+    assert handlers._gcode_plate_index(_gcode_zip(20.0, plate=2)) == 2
+    assert handlers._gcode_plate_index(_gcode_zip(20.0, plate=1)) == 1
+    # plain .gcode text / junk → no plate concept
+    assert handlers._gcode_plate_index(b"; plain gcode\nG1 X1\n") is None
+    assert handlers._gcode_plate_index(b"") is None
+
+
 def test_eject_command_parsing():
     assert classify.eject_command("!eject on") == "on"
     assert classify.eject_command("!eject an") == "on"

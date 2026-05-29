@@ -306,9 +306,14 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
         uploaded = await bambuddy.upload_library_file(content, name, folder_id)
         lfid = uploaded["id"]
         if kind == "gcode":
-            # Already sliced for a machine — queue as-is, no color dialog.
+            # Already sliced for a machine — queue as-is, no color dialog. A
+            # .gcode.3mf can hold its gcode under a non-1 plate index (e.g. a
+            # single plate exported from a multi-plate Studio project), so tell
+            # the printer which plate to print or it defaults to 1, finds no
+            # gcode there, and rejects the file (HMS 0500-4003).
             store.delete_job(job_id)
-            queued, note = await _queue_guarded(group_id, sender, name, lfid, [])
+            plate_id = _gcode_plate_index(content)
+            queued, note = await _queue_guarded(group_id, sender, name, lfid, [], plate_id=plate_id)
             await signal_client.send_to_group(
                 group_id,
                 f'✅ „{name}" ist in der Queue (vorgeslict)! Ich sag Bescheid, wenn er fertig ist.'
@@ -553,6 +558,28 @@ def _max_z_height(data):
         if m:
             heights.append(float(m.group(1)))
     return max(heights) if heights else None
+
+
+_PLATE_IDX_RE = re.compile(r"plate_(\d+)\.gcode$")
+
+
+def _gcode_plate_index(data):
+    """Plate index N of a single-plate ``.gcode.3mf`` (gcode under
+    ``Metadata/plate_N.gcode``), so the queue can tell the printer which plate to
+    print. None for a plain ``.gcode`` (no container) or if it isn't a single,
+    clearly-numbered plate."""
+    if not data or data[:2] != b"PK":
+        return None
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return None
+    plates = [n for n in z.namelist()
+              if n.startswith("Metadata/plate_") and n.endswith(".gcode")]
+    if len(plates) != 1:
+        return None
+    m = _PLATE_IDX_RE.search(plates[0])
+    return int(m.group(1)) if m else None
 
 
 async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None,
