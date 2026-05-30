@@ -669,11 +669,42 @@ def _gcode_machine_hint(data):
     return ""
 
 
+# The nozzle diameter a file was sliced for sits in the same machine header, e.g.
+# ";===== machine: P1S-0.4 ===" → "0.4". The P1S has no nozzle auto-detect, so we
+# compare this against the diameter the printer reports as fitted and refuse a
+# mismatch: 0.4 gcode pushed through a 0.2 nozzle under-extrudes / jams, and a
+# coarse slice on a fine nozzle won't bond. TODO: actually *support* other nozzles
+# — slice with the matching preset/profile (config.NOZZLE_DIAMETER drives the
+# Bambuddy slice; the sidecar fallback still needs a profiles/printer_p1s_0.2.json)
+# instead of only gating. For now the whole pipeline assumes 0.4 and we only guard.
+_GCODE_NOZZLE_RE = re.compile(rb";\s*=+\s*machine:\s*\S+?-([0-9.]+)\b")
+
+
+def _gcode_nozzle(data):
+    """The nozzle diameter (str, e.g. '0.4') a sliced file was sliced for, read from
+    its machine header, or '' if not found."""
+    for h in _plate_gcode_heads(data, 8192):
+        m = _GCODE_NOZZLE_RE.search(h)
+        if m:
+            return m.group(1).decode("ascii", "replace")
+    return ""
+
+
+def _nozzle_eq(a, b):
+    """Whether two nozzle-diameter strings denote the same size ('0.4' == '0.40')."""
+    try:
+        return abs(float(a) - float(b)) < 1e-3
+    except (TypeError, ValueError):
+        return a == b
+
+
 async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None):
     """Queue one sliced file, but only if it is positively sliced for this printer
     — the universal safety gate. The bot never converts foreign-machine gcode; a
     file that isn't provably P1S (foreign A1/X1/… or unrecognized) is declined with
-    a clear message rather than risking a crash. Returns (queued, note).
+    a clear message rather than risking a crash. It also refuses a file sliced for a
+    different nozzle than the one fitted (the P1S can't auto-detect its nozzle, so
+    0.4 gcode would silently jam a 0.2 nozzle). Returns (queued, note).
     ``plate_id`` is which plate the printer should print (a re-sliced single-plate
     file keeps the source plate's index, so it must be passed or the printer
     defaults to plate 1 and can't parse the file). With auto-eject on, a
@@ -692,6 +723,17 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
                        f'{config.PRINTER_MODEL} — ich reihe nur {config.PRINTER_MODEL}-Gcode '
                        'ein (kein Umkonvertieren von Fremddruckern). Schick mir bitte eine '
                        f'für den {config.PRINTER_MODEL} geslicte Datei oder ein {config.PRINTER_MODEL}-Profil.')
+    # Nozzle gate: the P1S can't detect its own nozzle, so a 0.4 slice would happily
+    # run through a fitted 0.2 nozzle and jam. Refuse only on a *positive* mismatch
+    # (both diameters known and different) — if the printer's nozzle can't be read we
+    # don't add a failure mode to the common 0.4 case.
+    want_nozzle = _gcode_nozzle(data)
+    mounted_nozzle = await bambuddy.mounted_nozzle(config.PRINTER_ID)
+    if want_nozzle and mounted_nozzle and not _nozzle_eq(want_nozzle, mounted_nozzle):
+        return False, (f'🚫 „{label}" ist für eine {want_nozzle} mm-Düse geslict, montiert '
+                       f'ist aber eine {mounted_nozzle} mm-Düse. Bitte die passende Düse '
+                       f'montieren (und am Drucker einstellen) oder die Datei für '
+                       f'{mounted_nozzle} mm neu slicen.')
     eject_on = store.get_flag(EJECT_FLAG, False)
     queue_file_id = file_id
     if eject_on:

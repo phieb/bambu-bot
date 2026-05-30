@@ -44,6 +44,23 @@ async def printer_status(printer_id):
     return await _get(f"/api/v1/printers/{printer_id}/status")
 
 
+async def mounted_nozzle(printer_id):
+    """The diameter (str, e.g. '0.4') of the nozzle currently fitted to the printer
+    as the machine reports it (``status.nozzles[].nozzle_diameter``), or None if it
+    can't be read. The P1S has no nozzle auto-detect, so this reflects what the user
+    set on the device. Used to refuse a print sliced for a different nozzle (0.4
+    gcode through a 0.2 nozzle under-extrudes / jams). Never raises."""
+    try:
+        st = await printer_status(printer_id)
+    except Exception:
+        return None
+    for n in (st.get("nozzles") or []) if isinstance(st, dict) else []:
+        d = (n.get("nozzle_diameter") or "").strip()
+        if d:
+            return d
+    return None
+
+
 async def camera_snapshot(printer_id):
     """Single live JPEG frame from the printer camera as raw bytes, or None.
     Works without starting a stream; never raises (a missing cam shouldn't
