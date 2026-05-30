@@ -627,31 +627,74 @@ def _sliced_printer_model(data):
     return ""
 
 
-async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None,
-                         is_fallback=False):
-    """Queue one sliced file, honoring the auto-eject safety gate. Returns
-    (queued, note). ``plate_id`` is which plate the printer should print (a
-    re-sliced single-plate file keeps the source plate's index, so it must be
-    passed or the printer defaults to plate 1 and can't parse the file).
-    ``is_fallback`` means the re-slice failed and we're queuing the *original
-    multi-plate* file — that's the only case auto-eject refuses (we can't inject
-    one plate's height-tailored eject into a multi-plate container). With eject
-    on, a height-tailored Farmloop eject is injected *into the file* (see
-    eject.py) and queued with Bambuddy's own injection off; a print taller than
-    the bender limit or one whose height can't be read is also refused. With
-    eject off, no injection and no height limit."""
+# Positively identify a sliced file's machine from its plate gcode: the
+# machine_start / change_filament headers carry ";===== machine: P1S-0.4 ===" and
+# ";=P1S ...". The bot never converts foreign gcode — it queues a file only if it
+# is provably this printer, and otherwise declines it (foreign A1/X1 gcode on the
+# P1S drives the head into the frame / jams the cutter).
+_P1S_GCODE_RE = re.compile(rb";\s*=+\s*(?:machine:\s*)?P1S\b", re.I)
+_MACHINE_HINT_RE = re.compile(rb";\s*=+\s*(?:machine:\s*)?([A-Za-z][\w.\-]*)")
+
+
+def _plate_gcode_heads(data, limit=65536):
+    """Leading bytes of each plate gcode in a sliced file (the machine headers sit
+    up top). A library ``.gcode.3mf`` is a zip; a plain ``.gcode`` is the text."""
+    if not data:
+        return []
+    if data[:2] == b"PK":
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile:
+            return []
+        return [z.read(n)[:limit] for n in z.namelist()
+                if n.startswith("Metadata/plate_") and n.endswith(".gcode")]
+    return [data[:limit]]
+
+
+def _is_p1s_gcode(data):
+    """True iff every plate gcode is positively identified as sliced for this
+    printer. Foreign or unrecognized machine gcode → False (declined, never
+    converted)."""
+    heads = _plate_gcode_heads(data)
+    return bool(heads) and all(_P1S_GCODE_RE.search(h) for h in heads)
+
+
+def _gcode_machine_hint(data):
+    """Best-effort machine name from a sliced file's gcode header (e.g. "A1mini",
+    "X1C") for a clearer 'not for this printer' message; "" if unknown."""
+    for h in _plate_gcode_heads(data, 8192):
+        m = _MACHINE_HINT_RE.search(h)
+        if m:
+            return m.group(1).decode("ascii", "replace")
+    return ""
+
+
+async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None):
+    """Queue one sliced file, but only if it is positively sliced for this printer
+    — the universal safety gate. The bot never converts foreign-machine gcode; a
+    file that isn't provably P1S (foreign A1/X1/… or unrecognized) is declined with
+    a clear message rather than risking a crash. Returns (queued, note).
+    ``plate_id`` is which plate the printer should print (a re-sliced single-plate
+    file keeps the source plate's index, so it must be passed or the printer
+    defaults to plate 1 and can't parse the file). With auto-eject on, a
+    height-tailored Farmloop eject is injected *into the file* (see eject.py) and
+    queued with Bambuddy's own injection off; a print taller than the bender limit
+    or one whose height can't be read is refused. With eject off, no injection and
+    no height limit."""
+    # Download the container once: it backs the machine-safety check and (with
+    # eject) the height read + injection. /download is reliable (vs /gcode, which
+    # returns extracted text for files Bambuddy typed as 3mf).
+    data = await bambuddy.download_file(file_id)
+    if not _is_p1s_gcode(data):
+        hint = _gcode_machine_hint(data)
+        whose = f'„{hint}“' if hint else "einen anderen Drucker"
+        return False, (f'🚫 „{label}" ist für {whose} geslict, nicht für den '
+                       f'{config.PRINTER_MODEL} — ich reihe nur {config.PRINTER_MODEL}-Gcode '
+                       'ein (kein Umkonvertieren von Fremddruckern). Schick mir bitte eine '
+                       f'für den {config.PRINTER_MODEL} geslicte Datei oder ein {config.PRINTER_MODEL}-Profil.')
     eject_on = store.get_flag(EJECT_FLAG, False)
     queue_file_id = file_id
     if eject_on:
-        if is_fallback:
-            return False, ("🚫 Re-Slice fiel auf die Original-Multi-Plate-Datei zurück — mit "
-                           "Auswerfer nicht sicher startbar, verworfen. Mit „!eject off“ und "
-                           "erneut schicken druckt's ohne Auswerfer.")
-        # The injection rewrites the plate gcode + its md5, so we need the actual
-        # container — /gcode isn't reliable (returns extracted text for files
-        # Bambuddy typed as 3mf, e.g. re-sliced *_plate_N.gcode.3mf). /download
-        # always gives the zip, and _max_z_height reads the height out of it.
-        data = await bambuddy.download_file(file_id)
         h = _max_z_height(data) if data else None
         if h is None:
             return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber verworfen "
@@ -722,7 +765,7 @@ async def _slice_all(group_id, job, decisions, plates):
         label = _plate_label(job["model_name"], plate, multi)
         item_lfid, src_plate = _plate_source(plate, job["library_file_id"])
         # A zip item is its own single-plate file; only a real multi-plate file
-        # (no per-item lfid) needs plate_id on the fallback path.
+        # (no per-item lfid) needs plate_id to point the printer at plate N.
         within_file_multi = plate.get("library_file_id") is None and multi
         nums = " ".join(str(m + 1) for m in d["mapping"])
         try:
@@ -731,15 +774,17 @@ async def _slice_all(group_id, job, decisions, plates):
                     group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
                 )
             file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
-            # A re-slice (Bambuddy or sidecar) writes the gcode under the *source*
-            # plate index (plate_N) → tell the printer to print plate N, else it
-            # defaults to 1, finds no gcode and rejects the file (HMS 0500-4003).
-            # Same index drives the original-file fallback. zip/single stay default.
+            # No clean P1S slice → abort this plate (the bot never queues a foreign
+            # or unconverted original; the re-slice note says why).
+            if not file_id:
+                lines.append(f'„{label}": {note}')
+                continue
+            # A re-slice writes the gcode under the *source* plate index (plate_N)
+            # → tell the printer to print plate N, else it defaults to 1, finds no
+            # gcode and rejects the file (HMS 0500-4003). zip/single stay default.
             plate_id = src_plate if within_file_multi else None
-            is_fallback = file_id == item_lfid and within_file_multi
             queued, gate = await _queue_guarded(
-                group_id, job["sender"], label, file_id, d["mapping"],
-                plate_id, is_fallback=is_fallback)
+                group_id, job["sender"], label, file_id, d["mapping"], plate_id)
             if queued:
                 queued_n += 1
                 lines.append(f'✅ „{label}" — Farben {nums}{note}')
@@ -760,10 +805,11 @@ async def _slice_all(group_id, job, decisions, plates):
 async def _reslice(library_file_id, required, ams, mapping, plate=None):
     """Re-slice the imported file (one plate) for the target printer so it doesn't
     print with the MakerWorld profile's machine slice (e.g. X1C on a P1S). Returns
-    (file_id_to_queue, note). If Bambuddy's slice fails (e.g. a multi-plate 3mf
-    whose objects sit off-bed → "object conflicts"), fall back to slicing the plate
-    directly on the slicer sidecar. On any miss, falls back to the original file so
-    a print is never lost — the note flags it."""
+    (new_file_id, note), or (None, reason) if no clean target slice could be made.
+    Bambuddy's slice is primary; if it fails (e.g. a multi-plate 3mf whose objects
+    sit off-bed → "object conflicts"), the slicer sidecar is tried. The bot never
+    queues the un-resliced original — a foreign-machine slice would crash the P1S —
+    so on any miss it returns None and the caller aborts that plate."""
     try:
         presets = await bambuddy.get_presets()
         try:
@@ -786,7 +832,8 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None):
         if not (printer_p and process_p and len(filament_ps) == len(required)):
             log.warning("reslice: presets incomplete (printer=%s process=%s filament=%d/%d)",
                         bool(printer_p), bool(process_p), len(filament_ps), len(required))
-            return library_file_id, " · ⚠️ Re-Slice übersprungen (Presets fehlen), drucke Original"
+            return None, (f"🚫 Re-Slice nicht möglich (Presets fehlen) — abgebrochen, "
+                          f"ich drucke kein ungeprüftes Fremd-Gcode.")
         started = await bambuddy.slice_file(library_file_id, printer_p, process_p, filament_ps, plate=plate)
         new_id = await _await_slice((started or {}).get("job_id"))
         if new_id:
@@ -797,10 +844,12 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None):
         side_id = await _reslice_via_sidecar(library_file_id, plate, ams, mapping)
         if side_id:
             return side_id, f" · ♻️ über Slicer-Sidecar für {config.PRINTER_MODEL} geslict"
-        return library_file_id, " · ⚠️ Re-Slice fehlgeschlagen, drucke Original"
+        return None, (f"🚫 Konnte {config.PRINTER_MODEL}-Gcode nicht erzeugen "
+                      "(Bambuddy + Sidecar gescheitert) — abgebrochen. Schick mir bitte eine "
+                      f"für den {config.PRINTER_MODEL} geslicte Datei oder ein {config.PRINTER_MODEL}-Profil.")
     except Exception:
         log.exception("reslice failed")
-        return library_file_id, " · ⚠️ Re-Slice fehlgeschlagen, drucke Original"
+        return None, f"🚫 Re-Slice fehlgeschlagen — abgebrochen (kein Druck mit Fremd-Gcode)."
 
 
 async def _reslice_via_sidecar(lfid, plate, ams, mapping):

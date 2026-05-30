@@ -10,6 +10,7 @@ import handlers  # noqa: E402
 import store  # noqa: E402
 
 _GCODE_H = ("; total layer number: 25\n; max_z_height: {h:.2f}\n"
+            "; change_filament_gcode = ;=P1S 20250822=\n"  # machine marker the safety gate needs
             "G1 X1 Y1 Z250\n; EXECUTABLE_BLOCK_END\n")
 
 
@@ -135,10 +136,9 @@ def test_gate_off_queues_without_injection(tmp_path, monkeypatch):
     _setup(tmp_path, enabled=False)
     calls = []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
-
-    async def boom(_):
-        raise AssertionError("should not fetch the container when eject off")
-    monkeypatch.setattr(handlers.bambuddy, "download_file", boom)
+    # The container is always fetched now (the safety gate reads its machine
+    # marker); a P1S-marked file passes and, with eject off, is queued as-is.
+    monkeypatch.setattr(handlers.bambuddy, "download_file", _gcode(_gcode_zip(20.0, plate=2)))
 
     queued, note = asyncio.run(handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=2))
     assert queued and note == ""
@@ -166,8 +166,8 @@ def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     monkeypatch.setattr(handlers.bambuddy, "ensure_folder", fake_ensure)
     monkeypatch.setattr(handlers.bambuddy, "upload_library_file", fake_upload)
 
-    # a successful multi-plate re-slice passes plate_id (here 3); eject must still
-    # inject (not refuse — that's only the is_fallback case)
+    # a successful multi-plate re-slice passes plate_id (here 3); a P1S-marked
+    # container passes the safety gate and the eject is injected
     queued, _ = asyncio.run(
         handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3))
     assert queued
@@ -187,21 +187,45 @@ def test_gate_on_short_print_injects(tmp_path, monkeypatch):
     assert z.read("Metadata/plate_3.gcode.md5").decode() == hashlib.md5(g).hexdigest().upper()
 
 
-def test_eject_fallback_multiplate_blocked(tmp_path, monkeypatch):
-    _setup(tmp_path, enabled=True)
+def _foreign_zip(machine="A1mini", height=10.0, plate=1):
+    """A .gcode.3mf whose plate gcode carries a *foreign* machine marker."""
+    import hashlib
+    import io
+    import zipfile
+    g = (f"; max_z_height: {height:.2f}\n"
+         f"; change_filament_gcode = ;===== {machine} 20250206 =====\n"
+         "G1 X1 Y1\n; EXECUTABLE_BLOCK_END\n").encode()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(f"Metadata/plate_{plate}.gcode", g)
+        z.writestr(f"Metadata/plate_{plate}.gcode.md5", hashlib.md5(g).hexdigest().upper())
+    return buf.getvalue()
+
+
+def test_is_p1s_gcode_detection():
+    # positively P1S → accepted
+    assert handlers._is_p1s_gcode(_gcode_zip(20.0)) is True
+    assert handlers._is_p1s_gcode(_GCODE_H.format(h=12.0).encode()) is True
+    # foreign machine → declined, and named for the message
+    assert handlers._is_p1s_gcode(_foreign_zip("A1mini")) is False
+    assert handlers._gcode_machine_hint(_foreign_zip("A1mini")) == "A1mini"
+    # unknown / no marker → declined (never assume P1S)
+    assert handlers._is_p1s_gcode(b"G1 X1 Y1\nG1 X2 Y2\n") is False
+
+
+def test_foreign_gcode_declined(tmp_path, monkeypatch):
+    """Universal safety gate: a file not sliced for this printer is declined and
+    never queued — the bot doesn't convert foreign-machine gcode."""
+    _setup(tmp_path, enabled=False)
     calls = []
     monkeypatch.setattr(handlers.bambuddy, "queue", _fake_queue(calls))
+    monkeypatch.setattr(handlers.bambuddy, "download_file", _gcode(_foreign_zip("A1mini")))
 
-    async def boom(_):
-        raise AssertionError("should not fetch the container for the blocked fallback path")
-    monkeypatch.setattr(handlers.bambuddy, "download_file", boom)
-
-    # is_fallback = re-slice failed, we'd queue the original multi-plate file →
-    # auto-eject refuses (can't inject one plate's eject into a multi-plate file)
     queued, note = asyncio.run(
-        handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3, is_fallback=True))
+        handlers._queue_guarded("group.x", "+1", "Teil", 7, [0], plate_id=3))
     assert not queued and "🚫" in note
-    assert calls == []
+    assert "A1mini" in note  # names the foreign machine
+    assert calls == []  # nothing reached the queue
 
 
 def test_build_end_gcode_height_scales():
