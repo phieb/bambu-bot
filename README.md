@@ -79,6 +79,7 @@ first". Every stage transition is idempotent (atomic claim).
 | `!progress` / `!status` | Live print state (%, layer, ETA) **+ a camera snapshot** |
 | `!liste` / `!queue` | The current Bambuddy queue with status emoji |
 | `!go` / `!los` / `!frei` | Confirm the plate is clear → release the next queued print (`POST /printers/{id}/clear-plate`) |
+| `!eject on` / `off` / _(no arg)_ | Toggle Farmloop auto-eject (status with no arg). See **Auto-eject** below. |
 | `!skip` | Skip the current plate's color question (e.g. missing filament), keep the rest |
 | `!abbrechen` / `!cancel` | Queue the already-configured plates and drop the rest; with nothing configured, discard the dialog; with no dialog, delete the last *pending* queue item (a running print is never stopped) |
 | `!help` / `!hilfe` | Command overview |
@@ -87,6 +88,30 @@ In a **registered group the bot claims every message** (so nothing leaks to othe
 tools); unrecognized text gets a friendly "here's what I can do" reply. When a
 queued print finishes/fails, the bot messages the group that queued it. Prints
 started through other channels aren't tracked → no Signal update.
+
+## Auto-eject
+
+`!eject on` makes finished prints get **pushed off the bed automatically** so an
+unattended farm keeps flowing (it also turns off Bambuddy's manual plate-clear
+wait, so the queue runs without `!go`).
+
+The eject G-code itself lives in **Bambuddy** as a per-model end snippet, not in
+the bot — Bambuddy injects it at dispatch and computes the sweep height per print
+from the file header (`{clamp(max_z_height - 4, …)}`). The bot just sets the
+job's `gcode_injection` flag from the toggle and **pre-screens the height**: with
+eject on, a part taller than `EJECT_MAX_HEIGHT_MM` (default 180), or one whose
+height can't be read, is refused before it's queued.
+
+**This needs a Bambuddy that evaluates G-code placeholders** — the snippet
+computes the sweep height per print with `{clamp(max_z_height - 4, …)}`, which
+stock/upstream Bambuddy leaves verbatim (broken). Run the fork build
+([`phieb/bambuddy`](https://github.com/phieb/bambuddy), branch
+`feat/gcode-placeholder-arithmetic`; deployed as image
+`bambuddy:vp-both-fixes-inject`). **Setup is required once** — paste the snippet
+into that Bambuddy's settings. Full how-to + prerequisite in
+[`EJECT-SETUP.md`](EJECT-SETUP.md); the snippet itself is
+[`eject_snippet_P1S.gcode`](eject_snippet_P1S.gcode). Without all this, `!eject on`
+queues with the flag set but nothing usable gets injected.
 
 ## Endpoints
 

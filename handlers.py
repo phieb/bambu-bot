@@ -8,7 +8,6 @@ reply means whatever the current stage expects, so it's dispatched on stage.
 """
 import asyncio
 import datetime
-import hashlib
 import io
 import json
 import logging
@@ -20,7 +19,6 @@ import bambuddy
 import classify
 import colors
 import config
-import eject
 import signal_client
 import slicing
 import slicer
@@ -499,19 +497,6 @@ def _plate_label(model_name, plate, multi):
     return model_name
 
 
-def _eject_filename(label, data):
-    """A ``.gcode.3mf`` name for the eject-injected re-upload: a readable base
-    from the user-facing label (so the queue/`!liste` show the model name) plus
-    a short content hash. The hash makes every distinct upload uniquely named, so
-    a stale same-named file — in Bambuddy's library OR cached on the printer's SD
-    — can never be printed in place of the freshly injected one."""
-    tag = hashlib.md5(data).hexdigest()[:8]
-    base = re.sub(r"\.(gcode\.3mf|gcode|3mf|stl|zip)$", "", label.strip(), flags=re.I)
-    base = re.sub(r"[^\w\s.+—-]", "", base).strip()
-    base = re.sub(r"\s+", " ", base)[:70].strip() or "eject"
-    return f"{base}_{tag}.gcode.3mf"
-
-
 async def _config(group_id, job, message):
     """Record the color choice for the current plate. Ask the next plate's colors
     if any are still pending; once every selected plate has its colors, slice +
@@ -707,13 +692,14 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
     0.4 gcode would silently jam a 0.2 nozzle). Returns (queued, note).
     ``plate_id`` is which plate the printer should print (a re-sliced single-plate
     file keeps the source plate's index, so it must be passed or the printer
-    defaults to plate 1 and can't parse the file). With auto-eject on, a
-    height-tailored Farmloop eject is injected *into the file* (see eject.py) and
-    queued with Bambuddy's own injection off; a print taller than the bender limit
-    or one whose height can't be read is refused. With eject off, no injection and
-    no height limit."""
+    defaults to plate 1 and can't parse the file). With auto-eject on, the job is
+    queued with Bambuddy's per-model G-code injection on (the height-tailored
+    Farmloop eject snippet runs there, computed from ``max_z_height`` at dispatch);
+    the bot only pre-screens height so a part taller than the bender limit — or one
+    whose height can't be read — is refused *before* it reaches the queue. With
+    eject off, no injection and no height limit."""
     # Download the container once: it backs the machine-safety check and (with
-    # eject) the height read + injection. /download is reliable (vs /gcode, which
+    # eject) the height pre-screen. /download is reliable (vs /gcode, which
     # returns extracted text for files Bambuddy typed as 3mf).
     data = await bambuddy.download_file(file_id)
     if not _is_p1s_gcode(data):
@@ -735,8 +721,12 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
                        f'montieren (und am Drucker einstellen) oder die Datei für '
                        f'{mounted_nozzle} mm neu slicen.')
     eject_on = store.get_flag(EJECT_FLAG, False)
-    queue_file_id = file_id
     if eject_on:
+        # Pre-screen height only — the eject snippet itself runs via Bambuddy's
+        # per-model injection (queued with gcode_injection=True below). Refuse a
+        # part too tall for the bender, or one whose height we can't read, before
+        # it reaches the queue so the user gets a clear note instead of a
+        # scheduler-side failure.
         h = _max_z_height(data) if data else None
         if h is None:
             return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber verworfen "
@@ -746,20 +736,9 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
             return False, (f"🚫 {h:.0f} mm hoch, max {config.EJECT_MAX_HEIGHT_MM:.0f} mm mit "
                            "Auswerfer (sonst fährt das Bett in den Bender) — verworfen. Tools ab, "
                            "oder „!eject off“ und erneut schicken.")
-        try:
-            modified = eject.inject_3mf(data, h)
-            folder = await bambuddy.ensure_folder(config.SIGNAL_FOLDER_NAME)
-            up = await bambuddy.upload_library_file(modified, _eject_filename(label, modified), folder_id=folder)
-            queue_file_id = up.get("id") if isinstance(up, dict) else None
-            if not queue_file_id:
-                raise ValueError("upload returned no id")
-        except Exception:
-            log.exception("eject injection failed")
-            return False, ("🚫 Eject-Gcode bauen fehlgeschlagen — verworfen. Mit „!eject off“ "
-                           "und erneut schicken druckt's ohne Auswerfer.")
-    resp = await bambuddy.queue(queue_file_id, mapping, plate_id=plate_id, gcode_injection=False)
+    resp = await bambuddy.queue(file_id, mapping, plate_id=plate_id, gcode_injection=eject_on)
     item_id = resp.get("id") if isinstance(resp, dict) else None
-    store.add_queued(group_id, sender, label, queue_file_id, item_id, eject=eject_on)
+    store.add_queued(group_id, sender, label, file_id, item_id, eject=eject_on)
     return True, ""
 
 
