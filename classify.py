@@ -45,6 +45,39 @@ def eject_command(message):
     return "status"
 
 
+# Set the build plate on the printer; optional arg (a short alias below) → its
+# canonical slicer curr_bed_type. No arg → show the current plate.
+_PLATE = re.compile(r"^\s*!\s*(?:platte|druckbett|bett|plate|bed)(?:\s+(.+?))?\s*$", re.I)
+# Short names the user can type → canonical BambuStudio/OrcaSlicer plate name.
+# Matched against the space-collapsed, lower-cased argument.
+BED_ALIASES = {
+    "cool": "Cool Plate", "cool plate": "Cool Plate", "kühl": "Cool Plate", "kuehl": "Cool Plate",
+    "textured": "Textured PEI Plate", "textur": "Textured PEI Plate", "pei": "Textured PEI Plate",
+    "textured pei": "Textured PEI Plate", "textured pei plate": "Textured PEI Plate",
+    "smooth": "Smooth PEI Plate", "glatt": "Smooth PEI Plate",
+    "smooth pei": "Smooth PEI Plate", "smooth pei plate": "Smooth PEI Plate",
+    "engineering": "Engineering Plate", "eng": "Engineering Plate", "engineering plate": "Engineering Plate",
+    "hot": "High Temp Plate", "high temp": "High Temp Plate", "hightemp": "High Temp Plate",
+    "high temp plate": "High Temp Plate",
+    "supertack": "Cool Plate (SuperTack)", "tack": "Cool Plate (SuperTack)",
+    "cool plate (supertack)": "Cool Plate (SuperTack)",
+}
+
+
+def plate_command(message):
+    """Parse a !platte command. None if it isn't one; else a dict:
+    {'action':'status'} (no arg), {'action':'set','bed_type':<canonical>}, or
+    {'action':'unknown','arg':<raw>} when the plate name isn't recognized."""
+    m = _PLATE.match(message)
+    if not m:
+        return None
+    arg = (m.group(1) or "").strip()
+    if not arg:
+        return {"action": "status"}
+    bed = BED_ALIASES.get(" ".join(arg.lower().split()))
+    return {"action": "set", "bed_type": bed} if bed else {"action": "unknown", "arg": arg}
+
+
 def normalize_group(raw):
     """Return (internal_id, send_id) for either incoming form.
 
@@ -172,6 +205,7 @@ def classify(envelope):
         "is_go": bool(_GO.match(message)),
         "is_skip": bool(_SKIP.match(message)),
         "eject_command": eject_command(message),
+        "plate_command": plate_command(message),
     }
 
 

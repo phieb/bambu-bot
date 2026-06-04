@@ -80,6 +80,7 @@ first". Every stage transition is idempotent (atomic claim).
 | `!liste` / `!queue` | The current Bambuddy queue with status emoji |
 | `!go` / `!los` / `!frei` | Confirm the plate is clear → release the next queued print (`POST /printers/{id}/clear-plate`) |
 | `!eject on` / `off` / _(no arg)_ | Toggle Farmloop auto-eject (status with no arg). See **Auto-eject** below. |
+| `!platte <name>` / _(no arg)_ | Set the build plate physically on the printer (`cool` / `textured` / `smooth` / `engineering` / `hot` / `supertack`), baked into every re-slice as the slicer's `curr_bed_type`. No arg shows the current plate. The P1S can't report its mounted plate, so set this on a swap. |
 | `!skip` | Skip the current plate's color question (e.g. missing filament), keep the rest |
 | `!abbrechen` / `!cancel` | Queue the already-configured plates and drop the rest; with nothing configured, discard the dialog; with no dialog, delete the last *pending* queue item (a running print is never stopped) |
 | `!help` / `!hilfe` | Command overview |
@@ -106,9 +107,9 @@ height can't be read, is refused before it's queued.
 computes the sweep height per print with `{clamp(max_z_height - 4, …)}`, which
 stock/upstream Bambuddy leaves verbatim (broken). Run the fork build
 ([`phieb/bambuddy`](https://github.com/phieb/bambuddy), branch
-`feat/gcode-placeholder-arithmetic`; deployed as image
-`bambuddy:vp-both-fixes-inject`). **Setup is required once** — paste the snippet
-into that Bambuddy's settings. Full how-to + prerequisite in
+`feature/gcode-injection-arithmetic`; deployed as image `bambuddy:0.2.4.5-inject`,
+a thin overlay on the official `0.2.4.5`). **Setup is required once** — paste the
+snippet into that Bambuddy's settings. Full how-to + prerequisite in
 [`EJECT-SETUP.md`](EJECT-SETUP.md); the snippet itself is
 [`eject_snippet_P1S.gcode`](eject_snippet_P1S.gcode). Without all this, `!eject on`
 queues with the flag set but nothing usable gets injected.
@@ -136,6 +137,7 @@ All accept the Signal envelope as the bare object, `{envelope:…}`, or
 | `BAMBUDDY_PRINTER_MODEL` | `P1S` (re-slice target + profile flagging + queue `target_model`) |
 | `BAMBUDDY_NOZZLE` | `0.4` |
 | `BAMBUDDY_BED_SIZE_MM` | `256` (used to center raw STLs) |
+| `BAMBUDDY_BED_TYPE` | `Cool Plate` — the **initial** build plate baked into re-slices as the slicer's `curr_bed_type` (bed temp + first-layer Z). Changeable at runtime with `!platte` (persisted in sqlite, takes precedence over this). The P1S can't report its mounted plate, so it's set manually. Canonical values: `Cool Plate` / `Engineering Plate` / `High Temp Plate` / `Textured PEI Plate` / `Smooth PEI Plate` / `Cool Plate (SuperTack)` |
 | `BAMBU_GROUP_NAME` | `🖨️ Bambu Print Queue` |
 | `BAMBU_SIGNAL_FOLDER` | `signal` (library folder for uploaded files) |
 | `THINGIVERSE_TOKEN` | _(empty → Thingiverse links get the generic reply)_ |

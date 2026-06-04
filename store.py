@@ -95,6 +95,21 @@ def set_flag(key, value):
         )
 
 
+def get_setting(key, default=None):
+    """Read a string setting, or ``default`` if unset (vs get_flag's bool)."""
+    with _conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return default if r is None else r["value"]
+
+
+def set_setting(key, value):
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)",
+            (key, str(value)),
+        )
+
+
 # ----- groups (registry) -----
 
 def get_group_by_sender(sender):

@@ -76,6 +76,8 @@ def _route(parsed):
         return "group_skip"
     if parsed["eject_command"]:
         return "group_eject"
+    if parsed["plate_command"]:
+        return "group_plate"
     if parsed["is_numbered"]:
         return "group_reply"
     # Unrecognized *text* in our own group → friendly "didn't get that" + help.
@@ -142,6 +144,8 @@ async def handle(envelope):
             await _skip(parsed["group_send_id"])
         elif route == "group_eject":
             await _eject(parsed["group_send_id"], parsed["eject_command"])
+        elif route == "group_plate":
+            await _plate(parsed["group_send_id"], parsed["plate_command"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
         elif route == "group_unknown":
@@ -770,6 +774,36 @@ async def _eject(group_id, command):
     await signal_client.send_to_group(group_id, msg)
 
 
+BED_TYPE_FLAG = "bed_type"
+_PLATE_OPTIONS = ("Umstellen mit: !platte cool · textured · smooth · engineering · "
+                  "hot · supertack")
+
+
+def _bed_type():
+    """The build plate currently set (sqlite, !platte), or the config default."""
+    return store.get_setting(BED_TYPE_FLAG, config.BED_TYPE)
+
+
+async def _plate(group_id, cmd):
+    """Show / set which build plate is on the printer. Stored in sqlite and baked
+    into every re-slice as the slicer's curr_bed_type (bed temp + first-layer Z).
+    The P1S can't report its mounted plate, so the farmer sets it here on a swap."""
+    if cmd["action"] == "set":
+        store.set_setting(BED_TYPE_FLAG, cmd["bed_type"])
+        await signal_client.send_to_group(
+            group_id,
+            f"🛏️ Druckplatte ist jetzt **{cmd['bed_type']}** — wird ab dem nächsten Slice "
+            "eingebacken (Bett-Temp + Erstschicht-Z). Beim Plattenwechsel hier neu setzen.")
+        return
+    current = _bed_type()
+    if cmd["action"] == "unknown":
+        await signal_client.send_to_group(
+            group_id, f"🤔 „{cmd['arg']}“ kenn ich nicht. Aktuell: **{current}**.\n" + _PLATE_OPTIONS)
+        return
+    await signal_client.send_to_group(
+        group_id, f"🛏️ Aktuelle Druckplatte: **{current}**.\n" + _PLATE_OPTIONS)
+
+
 async def _slice_all(group_id, job, decisions, plates):
     """Slice + queue every collected plate decision in order, then report once.
     Per-plate errors are isolated so one bad plate doesn't lose the others."""
@@ -855,7 +889,8 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None):
                         bool(printer_p), bool(process_p), len(filament_ps), len(required))
             return None, (f"🚫 Re-Slice nicht möglich (Presets fehlen) — abgebrochen, "
                           f"ich drucke kein ungeprüftes Fremd-Gcode.")
-        started = await bambuddy.slice_file(library_file_id, printer_p, process_p, filament_ps, plate=plate)
+        started = await bambuddy.slice_file(
+            library_file_id, printer_p, process_p, filament_ps, plate=plate, bed_type=_bed_type())
         new_id = await _await_slice((started or {}).get("job_id"))
         if new_id:
             return new_id, f" · ♻️ für {config.PRINTER_MODEL} neu geslict"
@@ -877,7 +912,12 @@ async def _reslice_via_sidecar(lfid, plate, ams, mapping):
     """Slice plate ``plate`` of a 3mf directly on the slicer sidecar (bundled P1S
     printer + a filament profile matched to the mapped AMS slot) and upload the
     result to Bambuddy. Returns the new library_file_id, or None. Used when
-    Bambuddy's own slice can't handle the file (off-bed multi-plate objects)."""
+    Bambuddy's own slice can't handle the file (off-bed multi-plate objects).
+    NOTE: this fallback does not yet apply config.BED_TYPE — the sidecar gets only
+    printer + filament profiles (no process), so curr_bed_type stays at the
+    slicer's default ('Textured PEI Plate'). Rare path (off-bed multi-plate only);
+    to honour the plate here we'd patch curr_bed_type into the 3mf's
+    project_settings before sending."""
     data = await bambuddy.download_file(lfid)
     if not data:
         return None

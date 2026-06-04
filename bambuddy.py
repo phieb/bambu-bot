@@ -245,10 +245,13 @@ async def filament_id_map():
     return await _get("/api/v1/cloud/filament-id-map")
 
 
-async def slice_file(library_file_id, printer_preset, process_preset, filament_presets, plate=None):
+async def slice_file(library_file_id, printer_preset, process_preset, filament_presets, plate=None, bed_type=None):
     """Enqueue a slice job → {job_id}. filament_presets is mandatory (one ref
     per model filament). Each *_preset is a {source, id} PresetRef. ``plate`` is
-    the 1-based plate to slice (None → plate 1); the result is a single-plate file."""
+    the 1-based plate to slice (None → plate 1); the result is a single-plate file.
+    ``bed_type`` overrides the process preset's ``curr_bed_type`` (a canonical
+    plate name like 'Cool Plate') so the gcode's bed temp + first-layer Z match
+    the plate actually fitted; None inherits the preset's default plate."""
     body = {
         "printer_preset": printer_preset,
         "process_preset": process_preset,
@@ -256,6 +259,8 @@ async def slice_file(library_file_id, printer_preset, process_preset, filament_p
     }
     if plate is not None:
         body["plate"] = int(plate)
+    if bed_type:
+        body["bed_type"] = bed_type
     return await _post(f"/api/v1/library/files/{int(library_file_id)}/slice", body)
 
 

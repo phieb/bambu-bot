@@ -25,3 +25,12 @@ THINGIVERSE_TOKEN = os.environ.get("THINGIVERSE_TOKEN", "")
 # are mounted — above it the descending bed runs into the bender clip mid-print.
 # Conservative default; verify at the machine (the eject bends around Z190–250).
 EJECT_MAX_HEIGHT_MM = float(os.environ.get("EJECT_MAX_HEIGHT_MM", "180"))
+# Build plate physically installed on the printer. Baked into every re-slice as
+# the slicer's ``curr_bed_type`` so the bed temperature and first-layer Z-offset
+# match the real plate — the P1S does NOT report its mounted plate over Bambuddy,
+# so this can't be auto-detected; set it to whatever is on the bed. Canonical
+# BambuStudio/OrcaSlicer values: 'Cool Plate', 'Engineering Plate', 'High Temp
+# Plate', 'Textured PEI Plate', 'Smooth PEI Plate', 'Cool Plate (SuperTack)',
+# 'Supertack Plate'. (Without this the slice inherits the preset default —
+# 'Textured PEI Plate' — and runs e.g. PLA at 55/65 °C on a 35 °C Cool Plate.)
+BED_TYPE = os.environ.get("BAMBUDDY_BED_TYPE", "Cool Plate")

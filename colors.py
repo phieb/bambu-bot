@@ -210,6 +210,7 @@ HELP_TEXT = (
     "• !liste → zeigt die Druck-Queue\n"
     "• !go → Platte ist frei, nächsten Druck starten\n"
     "• !eject on/off → Auto-Auswurf (Farmloop) ein/aus; „!eject“ zeigt den Status\n"
+    "• !platte cool/textured/smooth/… → Druckplatte setzen (für Bett-Temp); „!platte“ zeigt sie\n"
     "• !skip → aktuelles Plate überspringen (z.B. Farbe fehlt), Rest bleibt\n"
     "• !abbrechen → restliche Plates verwerfen (schon konfigurierte werden "
     "eingereiht); ohne offenen Dialog: letzten wartenden Queue-Job entfernen\n"
