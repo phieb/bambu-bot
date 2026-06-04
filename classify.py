@@ -30,6 +30,9 @@ _GO = re.compile(r"^\s*!\s*(go|los|weiter|frei|clear)\s*$", re.I)
 _SKIP = re.compile(r"^\s*!\s*(skip|überspringen|ueberspringen|weglassen|auslassen)\s*$", re.I)
 # Toggle Farmloop auto-eject; optional arg on|off (no arg → show status).
 _EJECT = re.compile(r"^\s*!\s*(eject|auswurf|auswerfen)(?:\s+(on|an|ein|off|aus|status))?\s*$", re.I)
+# Adopt queue jobs not sent through the bot (Studio Send / VP / web UI) so they
+# also get finished/failed notifications.
+_SYNC = re.compile(r"^\s*!\s*(sync|synchronisieren|scan|übernehmen|uebernehmen)\s*$", re.I)
 
 
 def eject_command(message):
@@ -206,6 +209,7 @@ def classify(envelope):
         "is_skip": bool(_SKIP.match(message)),
         "eject_command": eject_command(message),
         "plate_command": plate_command(message),
+        "is_sync": bool(_SYNC.match(message)),
     }
 
 

@@ -78,6 +78,8 @@ def _route(parsed):
         return "group_eject"
     if parsed["plate_command"]:
         return "group_plate"
+    if parsed["is_sync"]:
+        return "group_sync"
     if parsed["is_numbered"]:
         return "group_reply"
     # Unrecognized *text* in our own group → friendly "didn't get that" + help.
@@ -146,6 +148,8 @@ async def handle(envelope):
             await _eject(parsed["group_send_id"], parsed["eject_command"])
         elif route == "group_plate":
             await _plate(parsed["group_send_id"], parsed["plate_command"])
+        elif route == "group_sync":
+            await _sync(parsed["group_send_id"])
         elif route == "group_help":
             await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
         elif route == "group_unknown":
@@ -1052,6 +1056,38 @@ async def _list(group_id):
         tag = " · 🧹 Auswurf" if e else (" · ✋ ohne Auswurf" if e is False else "")
         lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st}){tag}'.replace("  ", " "))
     await signal_client.send_to_group(group_id, "📋 Queue (offen):\n" + "\n".join(lines))
+
+
+async def _sync(group_id):
+    """Adopt open queue jobs that weren't sent through the bot (Bambu Studio Send,
+    Virtual Printer, web UI) as completion trackers for THIS group, so they get
+    the same 'started/finished/failed' notifications. Already-tracked items (incl.
+    earlier syncs and the bot's own jobs) and finished ones are skipped, so it's
+    safe to run repeatedly."""
+    items = await bambuddy.list_queue()
+    tracked = store.tracked_item_ids()
+    adopted = []
+    for it in items or []:
+        iid = it.get("id")
+        status = (it.get("status") or "").lower()
+        if iid is None or iid in tracked or status in _DONE_QUEUE_STATUS:
+            continue
+        name = (it.get("library_file_name") or it.get("archive_name")
+                or it.get("target_model") or f'#{iid}')
+        jid = store.add_queued(group_id, "", name, None, iid, eject=False)
+        # Already mid-print → track at 'printing' so it only fires the finished
+        # message, not a misleading "starts now".
+        if status == "printing":
+            store.set_stage(jid, "printing")
+        adopted.append(name)
+    if not adopted:
+        await signal_client.send_to_group(
+            group_id, "🔄 Queue ist synchron — keine fremden Jobs zu übernehmen.")
+        return
+    lines = "\n".join(f"  • {n}" for n in adopted)
+    await signal_client.send_to_group(
+        group_id,
+        f"🔄 {len(adopted)} Job(s) übernommen — ich melde mich, wenn sie fertig sind:\n{lines}")
 
 
 _ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"}

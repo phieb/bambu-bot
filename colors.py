@@ -208,6 +208,7 @@ HELP_TEXT = (
     "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
     "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
     "• !liste → zeigt die Druck-Queue\n"
+    "• !sync → übernimmt Jobs, die nicht über mich liefen (z.B. Studio), für Fertig-Meldungen\n"
     "• !go → Platte ist frei, nächsten Druck starten\n"
     "• !eject on/off → Auto-Auswurf (Farmloop) ein/aus; „!eject“ zeigt den Status\n"
     "• !platte cool/textured/smooth/… → Druckplatte setzen (für Bett-Temp); „!platte“ zeigt sie\n"

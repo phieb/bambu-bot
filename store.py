@@ -258,6 +258,16 @@ def set_stage(job_id, stage):
         c.execute("UPDATE jobs SET stage=?, updated_at=? WHERE id=?", (stage, time.time(), job_id))
 
 
+def tracked_item_ids():
+    """All Bambuddy queue_item_ids the bot already has a tracker for (any stage),
+    so !sync doesn't double-adopt a job it (or a previous sync) already watches."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT DISTINCT queue_item_id FROM jobs WHERE queue_item_id IS NOT NULL"
+        ).fetchall()
+        return {r["queue_item_id"] for r in rows}
+
+
 def queued_jobs_with_item():
     """Trackers with a Bambuddy item id — watched for start ('queued') and for
     finish ('printing', already announced as started)."""

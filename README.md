@@ -78,6 +78,7 @@ first". Every stage transition is idempotent (atomic claim).
 |---|---|
 | `!progress` / `!status` | Live print state (%, layer, ETA) **+ a camera snapshot** |
 | `!liste` / `!queue` | The current Bambuddy queue with status emoji |
+| `!sync` | Adopt open queue jobs **not** sent through the bot (Bambu Studio Send, Virtual Printer, web UI) as completion trackers for this group, so they also get finished/failed notifications. Idempotent — already-tracked and finished jobs are skipped. |
 | `!go` / `!los` / `!frei` | Confirm the plate is clear → release the next queued print (`POST /printers/{id}/clear-plate`) |
 | `!eject on` / `off` / _(no arg)_ | Toggle Farmloop auto-eject (status with no arg). See **Auto-eject** below. |
 | `!platte <name>` / _(no arg)_ | Set the build plate physically on the printer (`cool` / `textured` / `smooth` / `engineering` / `hot` / `supertack`), baked into every re-slice as the slicer's `curr_bed_type`. No arg shows the current plate. The P1S can't report its mounted plate, so set this on a swap. |
