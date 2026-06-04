@@ -23,20 +23,33 @@ eject is broken (or worse, runs a garbage move). The arithmetic + `clamp/min/max
 evaluation is a **fork feature**, so you must run a Bambuddy that has it.
 
 - **Source:** fork [`phieb/bambuddy`](https://github.com/phieb/bambuddy), branch
-  **`feat/gcode-placeholder-arithmetic`**. On top of upstream's #422 pipeline it
+  **`feature/gcode-injection-arithmetic`**. On top of upstream's #422 pipeline it
   adds: placeholder **arithmetic** + `min/max/clamp`, per-model start/end snippet
-  injection for VP/Studio **and** API jobs (#1516), `.gcode.md5` sidecar
-  recompute (P1S rejects the file otherwise), insertion **before**
-  `; EXECUTABLE_BLOCK_END`, and the per-model `max_height_mm` guard.
-- **Deployed:** the farm host (`muscle`) runs this as the Docker image tagged
-  **`bambuddy:vp-both-fixes-inject`**.
-- **Build it yourself** (from a checkout of that branch):
-  ```bash
-  git clone -b feat/gcode-placeholder-arithmetic https://github.com/phieb/bambuddy.git
-  cd bambuddy && docker build -t bambuddy:inject .
+  injection for VP/Studio **and** API jobs, `.gcode.md5` sidecar recompute (P1S
+  rejects the file otherwise), insertion **before** `; EXECUTABLE_BLOCK_END`, and
+  the per-model `max_height_mm` guard. (The injection + P1S fixes *without* the
+  arithmetic are the upstream-PR subset, branch `feature/vp-gcode-injection`,
+  #1516; the `{clamp(...)}` this snippet needs lives only on the arithmetic
+  branch.)
+- **Deployed:** the farm host (`muscle`) runs this as the Docker image
+  **`bambuddy:0.2.4.5-inject`** — a thin overlay on the official
+  `ghcr.io/maziggy/bambuddy:0.2.4.5` that copies in the three patched files
+  (`threemf_tools.py`, `manager.py`, `print_scheduler.py`). The overlay is
+  **lossless**: those files are byte-identical between the branch's base (`dev`)
+  and `v0.2.4.5`, so only the injection hunks change.
+- **Build it yourself** — the overlay (matches what muscle runs; builds in
+  seconds, only a COPY layer; lives in `~/docker/bambuddy-inject-patch/` on muscle):
+  ```Dockerfile
+  FROM ghcr.io/maziggy/bambuddy:0.2.4.5
+  COPY threemf_tools.py   /app/backend/app/utils/threemf_tools.py
+  COPY manager.py         /app/backend/app/services/virtual_printer/manager.py
+  COPY print_scheduler.py /app/backend/app/services/print_scheduler.py
   ```
+  Take the three files from a checkout of `feature/gcode-injection-arithmetic`,
+  then `docker build -t bambuddy:0.2.4.5-inject .`. (Or build the whole app from
+  that branch: `docker build -t bambuddy:inject .`.)
 - **Full placeholder reference:** that repo's
-  [`docs/gcode-injection.md`](https://github.com/phieb/bambuddy/blob/feat/gcode-placeholder-arithmetic/docs/gcode-injection.md)
+  [`docs/gcode-injection.md`](https://github.com/phieb/bambuddy/blob/feature/gcode-injection-arithmetic/docs/gcode-injection.md)
   — the variable set (`max_z_height`, …), arithmetic rules, `clamp/min/max`, and
   the `max_height_mm` guard.
 - **Verify your build supports it:** after configuring the snippet (below),
