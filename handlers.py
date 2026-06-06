@@ -966,7 +966,7 @@ _STATUS_EMOJI = {
     "failed": "❌", "skipped": "⏭️", "cancelled": "🚫",
 }
 # Finished statuses hidden from !liste — they just pile up and clutter the view.
-_DONE_QUEUE_STATUS = {"completed", "cancelled", "skipped"}
+_DONE_QUEUE_STATUS = {"completed", "cancelled", "skipped", "failed"}
 
 
 async def _skip(group_id):
