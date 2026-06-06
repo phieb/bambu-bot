@@ -1119,8 +1119,13 @@ async def _progress(group_id):
         parts.append(f"{round(prog)}%")
     if ln and tl:
         parts.append(f"Layer {ln}/{tl}")
-    if rem:
-        parts.append(f"noch ca. {rem} min")
+    if rem and rem > 0:
+        r = int(rem)
+        h, m = divmod(r, 60)
+        dur = f"{h}:{m:02d} h" if h else f"{m} min"
+        clock = (datetime.datetime.now() + datetime.timedelta(minutes=r)).strftime("%H:%M")
+        parts.append(f"noch ca. {dur}")
+        parts.append(f"fertig ~{clock} Uhr")
     await signal_client.send_to_group(group_id, " · ".join(parts), attachments=attachments)
 
 
