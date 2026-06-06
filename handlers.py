@@ -19,6 +19,7 @@ import bambuddy
 import classify
 import colors
 import config
+import i18n
 import signal_client
 import slicing
 import slicer
@@ -28,6 +29,16 @@ import swatch
 import thingiverse
 
 log = logging.getLogger("bambu-bot")
+
+
+def _lang(group_id):
+    """The display language ('de'|'en') for a group — default German."""
+    return store.get_lang(group_id)
+
+
+def t(group_id, key, **kw):
+    """Localized message for ``key`` in ``group_id``'s language."""
+    return i18n.t(_lang(group_id), key, **kw)
 
 
 def _route(parsed):
@@ -48,6 +59,8 @@ def _route(parsed):
             return "dm_file"
         if parsed["is_other_model"]:
             return "dm_other_model"
+        if parsed["lang_command"]:
+            return "dm_lang"
         return "ignore"
     gid = parsed["group_send_id"]
     if not gid or not store.get_group_by_group_id(gid):
@@ -80,6 +93,8 @@ def _route(parsed):
         return "group_plate"
     if parsed["is_sync"]:
         return "group_sync"
+    if parsed["lang_command"]:
+        return "group_lang"
     if parsed["is_numbered"]:
         return "group_reply"
     # Unrecognized *text* in our own group → friendly "didn't get that" + help.
@@ -114,9 +129,15 @@ async def handle(envelope):
         elif route == "dm_other_model":
             # Reply in the person's group, never in the DM itself.
             group_id = await _ensure_group(parsed["sender"])
-            await signal_client.send_to_group(group_id, colors.OTHER_MODEL_TEXT)
+            await signal_client.send_to_group(group_id, colors.other_model_text(_lang(group_id)))
         elif route == "group_other_model":
-            await signal_client.send_to_group(parsed["group_send_id"], colors.OTHER_MODEL_TEXT)
+            gid = parsed["group_send_id"]
+            await signal_client.send_to_group(gid, colors.other_model_text(_lang(gid)))
+        elif route == "dm_lang":
+            group_id = await _ensure_group(parsed["sender"])
+            await _set_lang(group_id, parsed["lang_command"])
+        elif route == "group_lang":
+            await _set_lang(parsed["group_send_id"], parsed["lang_command"])
         elif route == "dm_file":
             group_id = await _ensure_group(parsed["sender"])
             await _intake_file(group_id, parsed["sender"], parsed["model_files"][0])
@@ -151,9 +172,11 @@ async def handle(envelope):
         elif route == "group_sync":
             await _sync(parsed["group_send_id"])
         elif route == "group_help":
-            await signal_client.send_to_group(parsed["group_send_id"], colors.HELP_TEXT)
+            gid = parsed["group_send_id"]
+            await signal_client.send_to_group(gid, colors.help_text(_lang(gid)))
         elif route == "group_unknown":
-            await signal_client.send_to_group(parsed["group_send_id"], colors.UNKNOWN_TEXT)
+            gid = parsed["group_send_id"]
+            await signal_client.send_to_group(gid, colors.unknown_text(_lang(gid)))
     except Exception:
         log.exception("handle failed (route=%s)", route)
 
@@ -167,30 +190,37 @@ async def _ensure_group(sender):
     return group_id
 
 
+async def _set_lang(group_id, cmd):
+    """Switch a group's reply language, or (cmd == 'show') report the current one.
+    The confirmation is sent in the *target* language so the switch is obvious."""
+    if cmd in ("de", "en"):
+        store.set_lang(group_id, cmd)
+        await signal_client.send_to_group(group_id, i18n.t(cmd, "lang_set"))
+    else:
+        await signal_client.send_to_group(group_id, t(group_id, "lang_status"))
+
+
 # ----- intake & the profile → plate → colors state machine -----
 
 async def _intake(group_id, sender, url):
+    lang = _lang(group_id)
     if store.active_job(group_id):
-        await signal_client.send_to_group(
-            group_id,
-            "⏳ Du hast noch einen offenen Job — bitte konfigurier den zuerst "
-            "(Profil/Plate/Farben), dann schick den nächsten Link.",
-        )
+        await signal_client.send_to_group(group_id, i18n.t(lang, "busy_link"))
         return
     try:
         resolved = await bambuddy.resolve(url)
     except Exception:
         log.exception("resolve failed")
-        await signal_client.send_to_group(group_id, "❌ Konnte den Link nicht auflösen.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "resolve_failed"))
         return
     model_id = resolved.get("model_id")
-    name = colors.model_name(resolved)
+    name = colors.model_name(resolved, lang)
     profiles = colors.profiles_list(resolved, config.PRINTER_MODEL)
     job_id = store.create_dialog(group_id, sender, model_id, name)
     if len(profiles) > 1:
         store.update_dialog(job_id, profiles=json.dumps(profiles), stage="awaiting_profile")
         await signal_client.send_to_group(
-            group_id, colors.build_profile_question(name, profiles, config.PRINTER_MODEL)
+            group_id, colors.build_profile_question(name, profiles, config.PRINTER_MODEL, lang)
         )
         return
     profile_id = profiles[0]["profile_id"] if profiles else colors.chosen_profile_id(resolved)
@@ -200,7 +230,7 @@ async def _intake(group_id, sender, url):
     except Exception:
         log.exception("import/plates failed")
         store.discard_dialog(job_id)
-        await signal_client.send_to_group(group_id, "❌ Konnte das Modell nicht importieren.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "import_failed"))
 
 
 async def _after_profile(group_id, job_id, model_id, name, profile_id):
@@ -229,11 +259,7 @@ async def _from_library_file(group_id, job_id, name, lfid):
 async def _busy(group_id):
     """True (and tells the group) if a dialog is already open — one job at a time."""
     if store.active_job(group_id):
-        await signal_client.send_to_group(
-            group_id,
-            "⏳ Du hast noch einen offenen Job — bitte konfigurier den zuerst, "
-            "dann schick das nächste Modell.",
-        )
+        await signal_client.send_to_group(group_id, t(group_id, "busy_model"))
         return True
     return False
 
@@ -242,11 +268,12 @@ async def _intake_file(group_id, sender, file_meta):
     """A Signal-uploaded model file: fetch its bytes, then run the shared intake."""
     if await _busy(group_id):
         return
+    lang = _lang(group_id)
     name = file_meta["filename"]
-    await signal_client.send_to_group(group_id, f'⬆️ „{name}" wird verarbeitet …')
+    await signal_client.send_to_group(group_id, i18n.t(lang, "file_processing", name=name))
     content = await signal_client.fetch_attachment(file_meta["id"])
     if not content:
-        await signal_client.send_to_group(group_id, "❌ Konnte die Datei nicht von Signal laden.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "file_load_failed_signal"))
         return
     await _process_model_bytes(group_id, sender, content, name, file_meta["kind"])
 
@@ -255,12 +282,13 @@ async def _intake_url(group_id, sender, url):
     """A direct link to a model file: download it, then run the shared intake."""
     if await _busy(group_id):
         return
+    lang = _lang(group_id)
     name = classify.filename_from_url(url)
     kind = classify.file_kind(name)
-    await signal_client.send_to_group(group_id, f'🌐 „{name}" wird vom Link geladen …')
+    await signal_client.send_to_group(group_id, i18n.t(lang, "url_loading", name=name))
     content = await signal_client.fetch_bytes(url)
     if not content:
-        await signal_client.send_to_group(group_id, "❌ Konnte die Datei vom Link nicht laden.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "url_load_failed"))
         return
     await _process_model_bytes(group_id, sender, content, name, kind)
 
@@ -270,17 +298,16 @@ async def _intake_thingiverse(group_id, sender, thing_id):
     them into a zip, then run the shared zip intake (multi-file → selection)."""
     if await _busy(group_id):
         return
-    await signal_client.send_to_group(group_id, f"🌐 Thingiverse-Modell {thing_id} wird geladen …")
+    lang = _lang(group_id)
+    await signal_client.send_to_group(group_id, i18n.t(lang, "thingiverse_loading", thing_id=thing_id))
     try:
         zip_bytes, name = await thingiverse.build_zip(thing_id)
     except Exception:
         log.exception("thingiverse fetch failed")
-        await signal_client.send_to_group(group_id, "❌ Konnte das Thingiverse-Modell nicht laden.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "thingiverse_failed"))
         return
     if not zip_bytes:
-        await signal_client.send_to_group(
-            group_id, "❌ Das Thingiverse-Modell hat keine druckbaren Dateien (.stl/.3mf)."
-        )
+        await signal_client.send_to_group(group_id, i18n.t(lang, "thingiverse_no_files"))
         return
     await _process_model_bytes(group_id, sender, zip_bytes, name, "zip")
 
@@ -288,6 +315,8 @@ async def _intake_thingiverse(group_id, sender, thing_id):
 async def _process_model_bytes(group_id, sender, content, name, kind):
     """Upload the bytes into the Signal library folder and start the right flow:
     .zip → extract into selectable items; .gcode → queue as-is; else → plates."""
+    lang = _lang(group_id)
+    file_word = "File" if lang == "en" else "Datei"
     job_id = store.create_dialog(group_id, sender, None, name)
     store.update_dialog(job_id, stage="configuring")
     try:
@@ -297,12 +326,12 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
             content = await asyncio.to_thread(stl.arrange_zip, content)
             result = await bambuddy.extract_zip(content, name, folder_id)
             items = [
-                {"filename": f.get("filename") or f"Datei {i}", "file_id": f["file_id"]}
+                {"filename": f.get("filename") or f"{file_word} {i}", "file_id": f["file_id"]}
                 for i, f in enumerate(result.get("files") or [], 1)
             ]
             if not items:
                 store.discard_dialog(job_id)
-                await signal_client.send_to_group(group_id, "❌ Im ZIP waren keine druckbaren Dateien.")
+                await signal_client.send_to_group(group_id, i18n.t(lang, "zip_no_files"))
                 return
             await _start_zip(group_id, job_id, name, items)
             return
@@ -323,16 +352,13 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
             model = _sliced_printer_model(content)
             if model != _TARGET_MODEL_ID:
                 if model:
-                    for_what = _PRINTER_NAMES.get(model) or f"ein anderes Geraet (ID {model})"
-                    why = (f'ist für **{for_what}** geslict, nicht für den {config.PRINTER_MODEL}')
+                    for_what = _PRINTER_NAMES.get(model) or i18n.t(lang, "gcode_other_device", model=model)
+                    why = i18n.t(lang, "gcode_for_other_named", for_what=for_what, model=config.PRINTER_MODEL)
                 else:
-                    why = (f'ist rohes/ungeprüftes G-Code — ich kann nicht erkennen, für welchen '
-                           f'Drucker es geslict wurde, und falscher G-Code kann den '
-                           f'{config.PRINTER_MODEL} beschädigen')
+                    why = i18n.t(lang, "gcode_raw_unverified", model=config.PRINTER_MODEL)
                 await signal_client.send_to_group(
                     group_id,
-                    f'🚫 „{name}" {why}. Bitte in Bambu Studio für den {config.PRINTER_MODEL} '
-                    'slicen, oder schick die .3mf/.stl, dann slice ich es selbst passend.')
+                    i18n.t(lang, "gcode_rejected", name=name, why=why, model=config.PRINTER_MODEL))
                 return
             # A .gcode.3mf can hold its gcode under a non-1 plate index (e.g. a
             # single plate from a multi-plate project), so tell the printer which
@@ -342,15 +368,15 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
             queued, note = await _queue_guarded(group_id, sender, name, lfid, [], plate_id=plate_id)
             await signal_client.send_to_group(
                 group_id,
-                f'✅ „{name}" ist in der Queue (vorgeslict)! Ich sag Bescheid, wenn er fertig ist.'
-                if queued else f'„{name}": {note}',
+                i18n.t(lang, "queued_presliced", name=name)
+                if queued else i18n.t(lang, "label_note", name=name, note=note),
             )
         else:
             await _from_library_file(group_id, job_id, name, lfid)
     except Exception:
         log.exception("file intake failed")
         store.discard_dialog(job_id)
-        await signal_client.send_to_group(group_id, "❌ Da ist beim Einreihen was schiefgelaufen.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "file_intake_failed"))
 
 
 async def _start_zip(group_id, job_id, name, items):
@@ -385,7 +411,7 @@ async def _thumbnail(lfid, plate_index):
 
 
 async def _send_plate_question(group_id, lfid, name, plates):
-    text = colors.build_plate_question(name, plates)
+    text = colors.build_plate_question(name, plates, _lang(group_id))
     srcs = [_plate_source(p, lfid) for p in plates]
     raws = await asyncio.gather(*(_thumbnail(l, idx) for l, idx in srcs))
     # Stamp each thumbnail with its list position (what the text lists and a reply
@@ -415,15 +441,16 @@ async def _ask_colors(group_id, job_id, lfid, label, plate):
         plate_index=plate.get("index"), plate_name=plate.get("name") or "",
         required_colors=json.dumps(required), ams_snapshot=json.dumps(ams),
     )
+    lang = _lang(group_id)
     src_lfid, src_idx = _plate_source(plate, lfid)
     raw, chart = await asyncio.gather(
         _thumbnail(src_lfid, src_idx),
-        asyncio.to_thread(swatch.build, label, required, ams),
+        asyncio.to_thread(swatch.build, label, required, ams, lang),
     )
     thumb = await asyncio.to_thread(swatch.shrink_image, raw) if raw else None
     attachments = [a for a in (thumb, chart) if a]
     await signal_client.send_to_group(
-        group_id, colors.build_question(label, required, ams), attachments=attachments or None
+        group_id, colors.build_question(label, required, ams, lang), attachments=attachments or None
     )
 
 
@@ -435,10 +462,7 @@ async def _reply(group_id, message):
     """A numbered reply means whatever the open dialog's stage expects."""
     job = store.active_job(group_id)
     if not job:
-        await signal_client.send_to_group(
-            group_id, "Es gibt gerade keinen offenen Job. Schick mir ein Modell — "
-            "MakerWorld-Link oder eine Datei (.3mf/.gcode/.stl/.zip)."
-        )
+        await signal_client.send_to_group(group_id, t(group_id, "no_open_job"))
         return
     stage = job["stage"]
     if stage == "awaiting_profile":
@@ -455,7 +479,7 @@ async def _pick_profile(group_id, job, message):
     nums = _parse_nums(message)
     if len(nums) != 1 or not (1 <= nums[0] <= len(profiles)):
         await signal_client.send_to_group(
-            group_id, f"⚠️ Bitte eine Zahl zwischen 1 und {len(profiles)} schicken (welches Profil)."
+            group_id, t(group_id, "profile_pick_invalid", n=len(profiles))
         )
         return
     if not store.claim_stage(group_id, "awaiting_profile", "configuring"):
@@ -466,7 +490,7 @@ async def _pick_profile(group_id, job, message):
     except Exception:
         log.exception("after_profile failed")
         store.discard_dialog(job["id"])
-        await signal_client.send_to_group(group_id, "❌ Konnte das Profil nicht laden.")
+        await signal_client.send_to_group(group_id, t(group_id, "profile_load_failed"))
 
 
 async def _pick_plates(group_id, job, message):
@@ -480,9 +504,7 @@ async def _pick_plates(group_id, job, message):
             chosen.append(n)
     if not chosen or len(chosen) != len(nums):
         await signal_client.send_to_group(
-            group_id,
-            f"⚠️ Bitte eine oder mehrere Zahlen zwischen 1 und {len(plates)} schicken "
-            "(welche Plates), z.B. „1“ oder „1 3“.",
+            group_id, t(group_id, "plate_pick_invalid", n=len(plates))
         )
         return
     if not store.claim_stage(group_id, "awaiting_plate", "configuring"):
@@ -496,7 +518,7 @@ async def _pick_plates(group_id, job, message):
     except Exception:
         log.exception("ask_colors failed")
         store.discard_dialog(job["id"])
-        await signal_client.send_to_group(group_id, "❌ Da ist was schiefgelaufen.")
+        await signal_client.send_to_group(group_id, t(group_id, "generic_failed"))
 
 
 def _plate_label(model_name, plate, multi):
@@ -509,9 +531,10 @@ async def _config(group_id, job, message):
     """Record the color choice for the current plate. Ask the next plate's colors
     if any are still pending; once every selected plate has its colors, slice +
     queue them all at once (collect-then-slice for nicer UX)."""
+    lang = _lang(group_id)
     required = json.loads(job["required_colors"] or "[]")
     ams = json.loads(job["ams_snapshot"] or "[]")
-    ok, mapping, error = colors.parse_reply(message, required, ams)
+    ok, mapping, error = colors.parse_reply(message, required, ams, lang)
     if not ok:
         await signal_client.send_to_group(group_id, error)
         return
@@ -531,7 +554,7 @@ async def _config(group_id, job, message):
             store.update_dialog(job_id, decisions=json.dumps(decisions),
                                 pending_plates=json.dumps(pending[1:]))
             await signal_client.send_to_group(
-                group_id, f'👍 Farben für „{label}" notiert: {nums}\n➡️ Weiter mit dem nächsten Plate:'
+                group_id, i18n.t(lang, "colors_noted", label=label, nums=nums)
             )
             next_idx = pending[0]
             next_plate = next((p for p in plates if p.get("index") == next_idx), {"index": next_idx, "filaments": []})
@@ -543,7 +566,7 @@ async def _config(group_id, job, message):
     except Exception:
         log.exception("config failed")
         store.discard_dialog(job_id)
-        await signal_client.send_to_group(group_id, "❌ Da ist was schiefgelaufen.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "generic_failed"))
 
 
 EJECT_FLAG = "eject_enabled"
@@ -709,14 +732,14 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
     # Download the container once: it backs the machine-safety check and (with
     # eject) the height pre-screen. /download is reliable (vs /gcode, which
     # returns extracted text for files Bambuddy typed as 3mf).
+    lang = _lang(group_id)
     data = await bambuddy.download_file(file_id)
     if not _is_p1s_gcode(data):
         hint = _gcode_machine_hint(data)
-        whose = f'„{hint}“' if hint else "einen anderen Drucker"
-        return False, (f'🚫 „{label}" ist für {whose} geslict, nicht für den '
-                       f'{config.PRINTER_MODEL} — ich reihe nur {config.PRINTER_MODEL}-Gcode '
-                       'ein (kein Umkonvertieren von Fremddruckern). Schick mir bitte eine '
-                       f'für den {config.PRINTER_MODEL} geslicte Datei oder ein {config.PRINTER_MODEL}-Profil.')
+        whose = (i18n.t(lang, "queue_foreign_whose_named", hint=hint) if hint
+                 else i18n.t(lang, "queue_foreign_whose_other"))
+        return False, i18n.t(lang, "queue_foreign", label=label, whose=whose,
+                             model=config.PRINTER_MODEL)
     # Nozzle gate: the P1S can't detect its own nozzle, so a 0.4 slice would happily
     # run through a fitted 0.2 nozzle and jam. Refuse only on a *positive* mismatch
     # (both diameters known and different) — if the printer's nozzle can't be read we
@@ -724,10 +747,8 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
     want_nozzle = _gcode_nozzle(data)
     mounted_nozzle = await bambuddy.mounted_nozzle(config.PRINTER_ID)
     if want_nozzle and mounted_nozzle and not _nozzle_eq(want_nozzle, mounted_nozzle):
-        return False, (f'🚫 „{label}" ist für eine {want_nozzle} mm-Düse geslict, montiert '
-                       f'ist aber eine {mounted_nozzle} mm-Düse. Bitte die passende Düse '
-                       f'montieren (und am Drucker einstellen) oder die Datei für '
-                       f'{mounted_nozzle} mm neu slicen.')
+        return False, i18n.t(lang, "queue_nozzle_mismatch", label=label,
+                             want=want_nozzle, mounted=mounted_nozzle)
     eject_on = store.get_flag(EJECT_FLAG, False)
     if eject_on:
         # Pre-screen height only — the eject snippet itself runs via Bambuddy's
@@ -737,13 +758,9 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
         # scheduler-side failure.
         h = _max_z_height(data) if data else None
         if h is None:
-            return False, ("🚫 Höhe nicht ermittelbar — sicherheitshalber verworfen "
-                           "(Auswerfer an). Mit „!eject off“ und erneut schicken druckt's "
-                           "ohne Auswerfer.")
+            return False, i18n.t(lang, "eject_height_unknown")
         if h > config.EJECT_MAX_HEIGHT_MM:
-            return False, (f"🚫 {h:.0f} mm hoch, max {config.EJECT_MAX_HEIGHT_MM:.0f} mm mit "
-                           "Auswerfer (sonst fährt das Bett in den Bender) — verworfen. Tools ab, "
-                           "oder „!eject off“ und erneut schicken.")
+            return False, i18n.t(lang, "eject_too_tall", h=h, max=config.EJECT_MAX_HEIGHT_MM)
     resp = await bambuddy.queue(file_id, mapping, plate_id=plate_id, gcode_injection=eject_on)
     item_id = resp.get("id") if isinstance(resp, dict) else None
     store.add_queued(group_id, sender, label, file_id, item_id, eject=eject_on)
@@ -760,27 +777,22 @@ async def _eject(group_id, command):
         except Exception:
             log.exception("toggling require_plate_clear failed")
         store.set_flag(EJECT_FLAG, enable)
+    lang = _lang(group_id)
     enabled = store.get_flag(EJECT_FLAG, False)
     if enabled:
-        msg = (f"🧹 Auto-Auswurf ist **an** (max {config.EJECT_MAX_HEIGHT_MM:.0f} mm Druckhöhe). "
-               "Nach jedem Druck wirft der Drucker selbst aus, der nächste Job startet automatisch. "
-               "Zu hohe Drucke werden gesperrt. Tools physisch montiert? Mit „!eject off“ wieder aus.")
+        msg = i18n.t(lang, "eject_on", max=config.EJECT_MAX_HEIGHT_MM)
     else:
-        msg = ("🛑 Auto-Auswurf ist **aus** — normaler Betrieb, „!go“ zwischen den Drucken. "
-               "Erst einschalten, wenn die Farmloop-Tools montiert sind: „!eject on“.")
+        msg = i18n.t(lang, "eject_off")
         # Jobs already in the queue keep their injected eject — flag them so it's
         # no surprise when they still auto-eject despite the switch being off.
         pending_eject = store.queued_eject_jobs()
         if pending_eject:
             names = "\n".join(f"  • {n}" for n in pending_eject)
-            msg += (f"\n\n⚠️ Diese {len(pending_eject)} schon gequeueten Drucke haben den Auswurf "
-                    f"**bereits im Gcode** und werfen trotzdem aus:\n{names}")
+            msg += i18n.t(lang, "eject_off_warning", n=len(pending_eject), names=names)
     await signal_client.send_to_group(group_id, msg)
 
 
 BED_TYPE_FLAG = "bed_type"
-_PLATE_OPTIONS = ("Umstellen mit: !platte cool · textured · smooth · engineering · "
-                  "hot · supertack")
 
 
 def _bed_type():
@@ -792,31 +804,30 @@ async def _plate(group_id, cmd):
     """Show / set which build plate is on the printer. Stored in sqlite and baked
     into every re-slice as the slicer's curr_bed_type (bed temp + first-layer Z).
     The P1S can't report its mounted plate, so the farmer sets it here on a swap."""
+    lang = _lang(group_id)
+    options = i18n.t(lang, "plate_options")
     if cmd["action"] == "set":
         store.set_setting(BED_TYPE_FLAG, cmd["bed_type"])
         await signal_client.send_to_group(
-            group_id,
-            f"🛏️ Druckplatte ist jetzt **{cmd['bed_type']}** — wird ab dem nächsten Slice "
-            "eingebacken (Bett-Temp + Erstschicht-Z). Beim Plattenwechsel hier neu setzen.")
+            group_id, i18n.t(lang, "plate_set", bed=cmd["bed_type"]))
         return
     current = _bed_type()
     if cmd["action"] == "unknown":
         await signal_client.send_to_group(
-            group_id, f"🤔 „{cmd['arg']}“ kenn ich nicht. Aktuell: **{current}**.\n" + _PLATE_OPTIONS)
+            group_id, i18n.t(lang, "plate_unknown", arg=cmd["arg"], current=current, options=options))
         return
     await signal_client.send_to_group(
-        group_id, f"🛏️ Aktuelle Druckplatte: **{current}**.\n" + _PLATE_OPTIONS)
+        group_id, i18n.t(lang, "plate_status", current=current, options=options))
 
 
 async def _slice_all(group_id, job, decisions, plates):
     """Slice + queue every collected plate decision in order, then report once.
     Per-plate errors are isolated so one bad plate doesn't lose the others."""
+    lang = _lang(group_id)
     multi = len(plates) > 1
     n = len(decisions)
     if n > 1:
-        await signal_client.send_to_group(
-            group_id, f'🔧 Alle Farben da — ich slice & reihe jetzt {n} Plates ein … (kurz Geduld)'
-        )
+        await signal_client.send_to_group(group_id, i18n.t(lang, "slice_all_multi", n=n))
     lines = []
     queued_n = 0
     for d in decisions:
@@ -830,13 +841,13 @@ async def _slice_all(group_id, job, decisions, plates):
         try:
             if n == 1:
                 await signal_client.send_to_group(
-                    group_id, f'🔧 Slice „{label}" für {config.PRINTER_MODEL} … (kurz Geduld)'
+                    group_id, i18n.t(lang, "slice_one", label=label, model=config.PRINTER_MODEL)
                 )
-            file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate)
+            file_id, note = await _reslice(item_lfid, d["required"], d["ams"], d["mapping"], src_plate, lang)
             # No clean P1S slice → abort this plate (the bot never queues a foreign
             # or unconverted original; the re-slice note says why).
             if not file_id:
-                lines.append(f'„{label}": {note}')
+                lines.append(i18n.t(lang, "label_note", name=label, note=note))
                 continue
             # A re-slice writes the gcode under the *source* plate index (plate_N)
             # → tell the printer to print plate N, else it defaults to 1, finds no
@@ -846,22 +857,22 @@ async def _slice_all(group_id, job, decisions, plates):
                 group_id, job["sender"], label, file_id, d["mapping"], plate_id)
             if queued:
                 queued_n += 1
-                lines.append(f'✅ „{label}" — Farben {nums}{note}')
+                lines.append(i18n.t(lang, "slice_ok_line", label=label, nums=nums, note=note))
             else:
-                lines.append(f'„{label}": {gate}')
+                lines.append(i18n.t(lang, "label_note", name=label, note=gate))
         except Exception:
             log.exception("slice/queue failed for plate %s", d.get("index"))
-            lines.append(f'❌ „{label}" fehlgeschlagen')
+            lines.append(i18n.t(lang, "slice_fail_line", label=label))
     store.delete_job(job["id"])
     if queued_n:
-        head = "Alles in der Queue! " if queued_n > 1 else ""
-        tail = f'\n{head}Ich sag dir Bescheid, wenn er fertig ist. (!progress · !liste · !abbrechen · !help)'
+        head = i18n.t(lang, "slice_tail_head_multi") if queued_n > 1 else ""
+        tail = i18n.t(lang, "slice_tail_queued", head=head)
     else:
-        tail = "\nNichts eingereiht. (!help)"
+        tail = i18n.t(lang, "slice_tail_none")
     await signal_client.send_to_group(group_id, "\n".join(lines) + tail)
 
 
-async def _reslice(library_file_id, required, ams, mapping, plate=None):
+async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de"):
     """Re-slice the imported file (one plate) for the target printer so it doesn't
     print with the MakerWorld profile's machine slice (e.g. X1C on a P1S). Returns
     (new_file_id, note), or (None, reason) if no clean target slice could be made.
@@ -891,25 +902,22 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None):
         if not (printer_p and process_p and len(filament_ps) == len(required)):
             log.warning("reslice: presets incomplete (printer=%s process=%s filament=%d/%d)",
                         bool(printer_p), bool(process_p), len(filament_ps), len(required))
-            return None, (f"🚫 Re-Slice nicht möglich (Presets fehlen) — abgebrochen, "
-                          f"ich drucke kein ungeprüftes Fremd-Gcode.")
+            return None, i18n.t(lang, "reslice_presets_missing")
         started = await bambuddy.slice_file(
             library_file_id, printer_p, process_p, filament_ps, plate=plate, bed_type=_bed_type())
         new_id = await _await_slice((started or {}).get("job_id"))
         if new_id:
-            return new_id, f" · ♻️ für {config.PRINTER_MODEL} neu geslict"
+            return new_id, i18n.t(lang, "reslice_note_bambu", model=config.PRINTER_MODEL)
         # Bambuddy's slice failed — typically a multi-plate 3mf whose objects sit
         # off-bed ("object conflicts"). Slice the plate straight on the real
         # slicer sidecar with bundled P1S profiles, which handles it.
         side_id = await _reslice_via_sidecar(library_file_id, plate, ams, mapping)
         if side_id:
-            return side_id, f" · ♻️ über Slicer-Sidecar für {config.PRINTER_MODEL} geslict"
-        return None, (f"🚫 Konnte {config.PRINTER_MODEL}-Gcode nicht erzeugen "
-                      "(Bambuddy + Sidecar gescheitert) — abgebrochen. Schick mir bitte eine "
-                      f"für den {config.PRINTER_MODEL} geslicte Datei oder ein {config.PRINTER_MODEL}-Profil.")
+            return side_id, i18n.t(lang, "reslice_note_sidecar", model=config.PRINTER_MODEL)
+        return None, i18n.t(lang, "reslice_failed_both", model=config.PRINTER_MODEL)
     except Exception:
         log.exception("reslice failed")
-        return None, f"🚫 Re-Slice fehlgeschlagen — abgebrochen (kein Druck mit Fremd-Gcode)."
+        return None, i18n.t(lang, "reslice_exception")
 
 
 async def _reslice_via_sidecar(lfid, plate, ams, mapping):
@@ -964,9 +972,10 @@ _DONE_QUEUE_STATUS = {"completed", "cancelled", "skipped"}
 async def _skip(group_id):
     """Skip the current plate's color question, keeping the already-configured
     plates. Continues with the next pending plate, or slices what's collected."""
+    lang = _lang(group_id)
     job = store.active_job(group_id)
     if not job or job["stage"] != "awaiting_colors":
-        await signal_client.send_to_group(group_id, "Gerade ist keine Farbfrage offen zum Überspringen.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "skip_nothing"))
         return
     if not store.claim_stage(group_id, "awaiting_colors", "configuring"):
         return
@@ -977,24 +986,25 @@ async def _skip(group_id):
     label = _plate_label(job["model_name"], plate, len(plates) > 1)
     if pending:
         store.update_dialog(job["id"], pending_plates=json.dumps(pending[1:]))
-        await signal_client.send_to_group(group_id, f'⏭️ „{label}" übersprungen. ➡️ Nächstes Plate:')
+        await signal_client.send_to_group(group_id, i18n.t(lang, "skip_next", label=label))
         next_idx = pending[0]
         next_plate = next((p for p in plates if p.get("index") == next_idx), {"index": next_idx, "filaments": []})
         await _ask_colors(group_id, job["id"], job["library_file_id"],
                           _plate_label(job["model_name"], next_plate, True), next_plate)
     elif decisions:
         await signal_client.send_to_group(
-            group_id, f'⏭️ „{label}" übersprungen. Ich reihe die {len(decisions)} konfigurierten ein:'
+            group_id, i18n.t(lang, "skip_queue_configured", label=label, n=len(decisions))
         )
         await _slice_all(group_id, job, decisions, plates)
     else:
         store.discard_dialog(job["id"])
-        await signal_client.send_to_group(group_id, "⏭️ Übersprungen — nichts mehr zu drucken übrig.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "skip_nothing_left"))
 
 
 async def _cancel(group_id):
     """Drop an open dialog, else remove the last still-pending queue item.
     A print that is already running is never stopped."""
+    lang = _lang(group_id)
     dialog = store.active_job(group_id)
     if dialog:
         # Don't throw away already-configured plates: queue those, drop the rest.
@@ -1002,22 +1012,18 @@ async def _cancel(group_id):
         if decisions and store.claim_stage(group_id, dialog["stage"], "configuring"):
             plates = json.loads(dialog["plates"] or "[]")
             await signal_client.send_to_group(
-                group_id,
-                f'🗑️ Aktuelles/restliche Plates verworfen. Die {len(decisions)} schon '
-                "konfigurierten reihe ich ein:",
+                group_id, i18n.t(lang, "cancel_discard_rest", n=len(decisions))
             )
             await _slice_all(group_id, dialog, decisions, plates)
             return
         store.discard_dialog(dialog["id"])
         await signal_client.send_to_group(
-            group_id,
-            f'🗑️ Abgebrochen: „{dialog["model_name"]}" verworfen. '
-            "Schick mir ein neues Modell — Link oder Datei —, wenn du willst.",
+            group_id, i18n.t(lang, "cancel_discarded", name=dialog["model_name"])
         )
         return
     job = store.last_queued_job(group_id)
     if not job:
-        await signal_client.send_to_group(group_id, "Da ist gerade nichts zum Abbrechen.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "cancel_nothing"))
         return
     item = await bambuddy.get_queue_item(job["queue_item_id"])
     status = (item or {}).get("status")
@@ -1025,26 +1031,29 @@ async def _cancel(group_id):
     if status == "pending":
         await bambuddy.delete_queue_item(job["queue_item_id"])
         store.mark_cancelled(job["id"])
-        await signal_client.send_to_group(group_id, f'🗑️ „{name}" aus der Queue entfernt.')
+        await signal_client.send_to_group(group_id, i18n.t(lang, "cancel_removed", name=name))
     elif status == "printing":
-        await signal_client.send_to_group(
-            group_id, f'🖨️ „{name}" druckt schon — laufende Drucke breche ich nicht ab.'
-        )
+        await signal_client.send_to_group(group_id, i18n.t(lang, "cancel_printing", name=name))
     else:
         store.mark_cancelled(job["id"])
         await signal_client.send_to_group(
-            group_id, f'„{name}" ist nicht mehr abbrechbar (Status: {status or "unbekannt"}).'
+            group_id,
+            i18n.t(lang, "cancel_not_cancelable", name=name,
+                   status=status or i18n.t(lang, "status_unknown"))
         )
 
 
 async def _list(group_id):
+    lang = _lang(group_id)
     items = await bambuddy.list_queue()
     open_items = [it for it in (items or [])
                   if (it.get("status") or "").lower() not in _DONE_QUEUE_STATUS]
     if not open_items:
-        await signal_client.send_to_group(group_id, "📋 Keine offenen Drucke in der Queue.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "list_empty"))
         return
     ejects = store.eject_by_item()  # {queue_item_id: bool} for bot-tracked jobs
+    eject_tag = i18n.t(lang, "list_eject_tag")
+    noeject_tag = i18n.t(lang, "list_noeject_tag")
     lines = []
     for i, it in enumerate(open_items, 1):
         nm = (it.get("library_file_name") or it.get("archive_name")
@@ -1053,9 +1062,9 @@ async def _list(group_id):
         # eject tag: 🧹 = with auto-eject, ✋ = without; nothing for jobs the bot
         # didn't queue (e.g. a Bambu Studio print — we don't know).
         e = ejects.get(it.get("id"))
-        tag = " · 🧹 Auswurf" if e else (" · ✋ ohne Auswurf" if e is False else "")
+        tag = eject_tag if e else (noeject_tag if e is False else "")
         lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st}){tag}'.replace("  ", " "))
-    await signal_client.send_to_group(group_id, "📋 Queue (offen):\n" + "\n".join(lines))
+    await signal_client.send_to_group(group_id, i18n.t(lang, "list_header") + "\n".join(lines))
 
 
 async def _sync(group_id):
@@ -1080,14 +1089,13 @@ async def _sync(group_id):
         if status == "printing":
             store.set_stage(jid, "printing")
         adopted.append(name)
+    lang = _lang(group_id)
     if not adopted:
-        await signal_client.send_to_group(
-            group_id, "🔄 Queue ist synchron — keine fremden Jobs zu übernehmen.")
+        await signal_client.send_to_group(group_id, i18n.t(lang, "sync_in_sync"))
         return
     lines = "\n".join(f"  • {n}" for n in adopted)
     await signal_client.send_to_group(
-        group_id,
-        f"🔄 {len(adopted)} Job(s) übernommen — ich melde mich, wenn sie fertig sind:\n{lines}")
+        group_id, i18n.t(lang, "sync_adopted", n=len(adopted), lines=lines))
 
 
 _ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"}
@@ -1096,6 +1104,7 @@ _ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"
 async def _progress(group_id):
     """Current print on the printer (any source), or idle — with a live cam shot."""
     # Status + camera frame overlap; the snapshot is best-effort (None if no cam).
+    lang = _lang(group_id)
     s, raw = await asyncio.gather(
         bambuddy.printer_status(config.PRINTER_ID),
         bambuddy.camera_snapshot(config.PRINTER_ID),
@@ -1111,7 +1120,7 @@ async def _progress(group_id):
     active = state.upper() in _ACTIVE_STATES or (isinstance(prog, (int, float)) and 0 < prog < 100)
     if not (name and active):
         await signal_client.send_to_group(
-            group_id, f"🖨️ Drucker ist {state.lower()} — gerade kein Druck.", attachments=attachments
+            group_id, i18n.t(lang, "progress_idle", state=state.lower()), attachments=attachments
         )
         return
     parts = [f'🖨️ „{name}" — {state}']
@@ -1124,25 +1133,22 @@ async def _progress(group_id):
         h, m = divmod(r, 60)
         dur = f"{h}:{m:02d} h" if h else f"{m} min"
         clock = (datetime.datetime.now() + datetime.timedelta(minutes=r)).strftime("%H:%M")
-        parts.append(f"noch ca. {dur}")
-        parts.append(f"fertig ~{clock} Uhr")
+        parts.append(i18n.t(lang, "progress_remaining", dur=dur))
+        parts.append(i18n.t(lang, "progress_done_at", clock=clock))
     await signal_client.send_to_group(group_id, " · ".join(parts), attachments=attachments)
 
 
 async def _go(group_id):
     """Confirm the build plate is clear so Bambuddy releases the next queued print
     (Bambuddy is set to wait for manual plate-clear confirmation between jobs)."""
+    lang = _lang(group_id)
     try:
         await bambuddy.clear_plate(config.PRINTER_ID)
     except Exception:
         log.exception("clear-plate failed")
-        await signal_client.send_to_group(
-            group_id, "❌ Konnte die Platte nicht freigeben — probier's gleich nochmal."
-        )
+        await signal_client.send_to_group(group_id, i18n.t(lang, "go_failed"))
         return
-    await signal_client.send_to_group(
-        group_id, "✅ Platte als frei bestätigt — der nächste Druck kann starten. 🚀"
-    )
+    await signal_client.send_to_group(group_id, i18n.t(lang, "go_ok"))
 
 
 async def poll_completions(interval=60):
@@ -1156,7 +1162,7 @@ async def poll_completions(interval=60):
         await asyncio.sleep(interval)
 
 
-def _eta_phrase(remaining_min):
+def _eta_phrase(remaining_min, lang="de"):
     """' Fertig ca. 15:26 Uhr (in ~2 h 15 min).' from the printer's remaining
     minutes, or '' if it isn't known yet. Clock time is the container's local
     time (CEST), which matches the printer's locale."""
@@ -1166,7 +1172,7 @@ def _eta_phrase(remaining_min):
     h, m = divmod(rem, 60)
     dur = f"{h} h {m} min" if h else f"{m} min"
     clock = (datetime.datetime.now() + datetime.timedelta(minutes=rem)).strftime("%H:%M")
-    return f" Fertig ca. {clock} Uhr (in ~{dur})."
+    return i18n.t(lang, "eta_phrase", clock=clock, dur=dur)
 
 
 async def _check_completions():
@@ -1186,6 +1192,7 @@ async def _check_completions():
             # Item aged out of Bambuddy — stop tracking, don't poll a 404 forever.
             store.set_stage(job["id"], "done")
             continue
+        lang = _lang(job["group_id"])
         status = item.get("status")
         if status == "printing" and job["stage"] != "printing":
             # pending → printing, but only believe it once the machine is really
@@ -1194,26 +1201,24 @@ async def _check_completions():
                 continue
             await signal_client.send_to_group(
                 job["group_id"],
-                f'🖨️ „{job["model_name"]}" druckt jetzt los!'
-                f'{_eta_phrase(pstatus.get("remaining_time"))} '
-                "Ich sag Bescheid, wenn er fertig ist. (!progress für Live-Status + Foto)",
+                i18n.t(lang, "completion_started", name=job["model_name"],
+                       eta=_eta_phrase(pstatus.get("remaining_time"), lang)),
             )
             store.set_stage(job["id"], "printing")
         elif status == "completed":
-            tail = ("Auto-Auswurf läuft — der nächste Druck startet von selbst. 🧹"
+            tail = (i18n.t(lang, "completion_done_eject")
                     if store.get_flag(EJECT_FLAG, False)
-                    else "Wenn die Platte frei ist: !go → nächster Druck startet.")
+                    else i18n.t(lang, "completion_done_go"))
             await signal_client.send_to_group(
                 job["group_id"],
-                f'✅ „{job["model_name"]}" ist fertig gedruckt! 🎉\n' + tail,
+                i18n.t(lang, "completion_done", name=job["model_name"], tail=tail),
             )
             store.set_stage(job["id"], "done")
         elif status == "failed":
+            detail = (f": {item.get('error_message')}" if item.get("error_message") else ".")
             await signal_client.send_to_group(
                 job["group_id"],
-                f'❌ „{job["model_name"]}" ist fehlgeschlagen' +
-                (f": {item.get('error_message')}" if item.get("error_message") else ".") +
-                "\n(!liste zeigt die Queue)",
+                i18n.t(lang, "completion_failed", name=job["model_name"], detail=detail),
             )
             store.set_stage(job["id"], "failed")
         elif status == "cancelled":

@@ -96,10 +96,11 @@ def numbered_thumbnail(data, n, max_px=512, quality=82):
         return shrink_image(data, max_px, quality)
 
 
-def build(name, required, ams):
+def build(name, required, ams, lang="de"):
     """Required colors + AMS slots as a labeled swatch PNG (base64) or None."""
     if Image is None:
         return None
+    en = lang == "en"
     try:
         rows = len(required) + len(ams)
         height = _PAD * 2 + _HEADER * 2 + rows * _ROW + 30
@@ -124,17 +125,19 @@ def build(name, required, ams):
                     [_PAD, y, _PAD + _SW, y + _SW],
                     fill=rgb, outline=(150, 150, 150), width=1,
                 )
-                cname = colors.color_name(it["color"])
+                cname = colors.color_name(it["color"], lang)
                 d.text((_PAD + _SW + 14, y + 6), fmt(it, cname), font=f_row, fill=_FG)
                 y += _ROW
 
+        color_word = "Color" if en else "Farbe"
         section(
-            f"Modell braucht {len(required)} Farbe(n):",
+            (f"Model needs {len(required)} color(s):" if en
+             else f"Modell braucht {len(required)} Farbe(n):"),
             required,
-            lambda c, n: f"Farbe {c['index'] + 1}:  {c['type']} {n}".rstrip(),
+            lambda c, n: f"{color_word} {c['index'] + 1}:  {c['type']} {n}".rstrip(),
         )
         section(
-            "AMS Slots:",
+            "AMS slots:" if en else "AMS Slots:",
             ams,
             lambda a, n: (f"{a['slot']})  {a['type']} {n}".rstrip()
                           + (f"  {a['sub']}" if a.get("sub") else "")),

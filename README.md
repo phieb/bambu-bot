@@ -84,12 +84,28 @@ first". Every stage transition is idempotent (atomic claim).
 | `!platte <name>` / _(no arg)_ | Set the build plate physically on the printer (`cool` / `textured` / `smooth` / `engineering` / `hot` / `supertack`), baked into every re-slice as the slicer's `curr_bed_type`. No arg shows the current plate. The P1S can't report its mounted plate, so set this on a swap. |
 | `!skip` | Skip the current plate's color question (e.g. missing filament), keep the rest |
 | `!abbrechen` / `!cancel` | Queue the already-configured plates and drop the rest; with nothing configured, discard the dialog; with no dialog, delete the last *pending* queue item (a running print is never stopped) |
+| `!english` / `!deutsch` / `!lang <de\|en>` | Switch this group's reply language. See **Localization** below. |
 | `!help` / `!hilfe` | Command overview |
 
 In a **registered group the bot claims every message** (so nothing leaks to other
 tools); unrecognized text gets a friendly "here's what I can do" reply. When a
 queued print finishes/fails, the bot messages the group that queued it. Prints
 started through other channels aren't tracked → no Signal update.
+
+## Localization
+
+Replies are available in **German (default)** and **English**, chosen **per
+group**. A new group starts in German; send `!english` (or `!lang en`) to switch
+it to English and `!deutsch` to switch back. `!lang` with no argument reports the
+current language. The choice is persisted in sqlite (`groups.lang`) so it sticks
+across restarts, and the confirmation comes back in the language you switched to.
+
+Command keywords are bilingual either way — `!list` == `!liste`, `!cancel` ==
+`!abbrechen`, `!plate` == `!platte` — so only the *displayed* text changes.
+Color names follow the language too (the swatch image and the text), and so do
+the started/finished/failed notifications. All strings live in
+[`i18n.py`](i18n.py) keyed by name with a `de` and `en` template; German is the
+source of truth and the fallback for any missing translation.
 
 ## Auto-eject
 

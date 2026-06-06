@@ -40,6 +40,9 @@ def init_db():
                 created_at REAL
             )"""
         )
+        gcols = [r[1] for r in c.execute("PRAGMA table_info(groups)").fetchall()]
+        if "lang" not in gcols:
+            c.execute("ALTER TABLE groups ADD COLUMN lang TEXT")
         c.execute(
             """CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +133,20 @@ def save_group(sender, group_id, group_name):
             "INSERT OR REPLACE INTO groups (sender, group_id, group_name, created_at) VALUES (?,?,?,?)",
             (sender, group_id, group_name, time.time()),
         )
+
+
+def get_lang(group_id, default="de"):
+    """The display language ('de'|'en') chosen for a group; ``default`` if the
+    group is unknown or never switched (the bot's default stays German)."""
+    with _conn() as c:
+        r = c.execute("SELECT lang FROM groups WHERE group_id=?", (group_id,)).fetchone()
+    return (r["lang"] if r and r["lang"] else default)
+
+
+def set_lang(group_id, lang):
+    """Persist a group's display language (no-op if the group isn't registered)."""
+    with _conn() as c:
+        c.execute("UPDATE groups SET lang=? WHERE group_id=?", (lang, group_id))
 
 
 # ----- dialog (the single open job per group) -----
