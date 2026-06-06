@@ -966,7 +966,7 @@ _STATUS_EMOJI = {
     "failed": "❌", "skipped": "⏭️", "cancelled": "🚫",
 }
 # Finished statuses hidden from !liste — they just pile up and clutter the view.
-_DONE_QUEUE_STATUS = {"completed", "cancelled", "skipped"}
+_DONE_QUEUE_STATUS = {"completed", "cancelled", "skipped", "failed"}
 
 
 async def _skip(group_id):
@@ -1063,7 +1063,12 @@ async def _list(group_id):
         # didn't queue (e.g. a Bambu Studio print — we don't know).
         e = ejects.get(it.get("id"))
         tag = eject_tag if e else (noeject_tag if e is False else "")
-        lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st}){tag}'.replace("  ", " "))
+        # Sliced print time in seconds (verified against the real Bambuddy
+        # /queue/ payload — the field is always `print_time_seconds`), shown as
+        # e.g. ' · 21 min'; omitted when the queue item doesn't carry it.
+        secs = it.get("print_time_seconds")
+        dur = f" · {colors._fmt_minutes(secs)}" if secs else ""
+        lines.append(f'{i}. {_STATUS_EMOJI.get(st, "")} {nm} ({st}){dur}{tag}'.replace("  ", " "))
     await signal_client.send_to_group(group_id, i18n.t(lang, "list_header") + "\n".join(lines))
 
 
