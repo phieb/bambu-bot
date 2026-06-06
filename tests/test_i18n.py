@@ -82,6 +82,14 @@ def test_store_set_and_get_lang(tmp_path):
 
 # ----- colors: bilingual rendering -----
 
+def test_palette_entries_are_explicit_and_complete():
+    # every anchor carries an explicit hex + a name per supported language
+    for entry in colors._PALETTE:
+        assert set(entry) >= {"hex", "de", "en"}, entry
+        assert len(entry["hex"]) == 6, entry
+        assert entry["de"] and entry["en"], entry
+
+
 def test_color_name_english():
     assert colors.color_name("FFFFFF", "en") == "White"
     assert colors.color_name("000000", "en") == "Black"

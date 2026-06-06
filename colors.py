@@ -7,20 +7,32 @@ import i18n
 
 # Curated palette for naming a hex value. Covers tones emoji squares can't
 # (Grau/Beige/Rosa/…), so the text stays readable even without the swatch.
-# Each anchor carries its German and English name plus the hex it anchors.
+# Each anchor carries the hex it anchors plus its name per language — the
+# language key is explicit (no positional de/en slots), so adding a language is
+# just another key.
 _PALETTE = [
-    ("Schwarz", "Black", "000000"), ("Dunkelgrau", "Dark Gray", "404040"),
-    ("Grau", "Gray", "808080"), ("Hellgrau", "Light Gray", "C0C0C0"),
-    ("Weiß", "White", "FFFFFF"),
-    ("Rot", "Red", "E0301E"), ("Orange", "Orange", "F08000"),
-    ("Gelb", "Yellow", "F0D000"), ("Grün", "Green", "20A020"),
-    ("Dunkelgrün", "Dark Green", "0A5A0A"), ("Türkis", "Teal", "10B0A0"),
-    ("Hellblau", "Light Blue", "60B0E0"), ("Blau", "Blue", "1050C0"),
-    ("Dunkelblau", "Dark Blue", "0A1A6A"), ("Lila", "Purple", "8030C0"),
-    ("Flieder", "Lilac", "AE96D4"), ("Rosa", "Pink", "F060A0"),
-    ("Pink", "Magenta", "E0108A"), ("Braun", "Brown", "7A4A20"),
-    ("Beige", "Beige", "D8C8A8"), ("Gold", "Gold", "C0A030"),
-    ("Silber", "Silver", "C8C8D0"),
+    {"hex": "000000", "de": "Schwarz",    "en": "Black"},
+    {"hex": "404040", "de": "Dunkelgrau", "en": "Dark Gray"},
+    {"hex": "808080", "de": "Grau",       "en": "Gray"},
+    {"hex": "C0C0C0", "de": "Hellgrau",   "en": "Light Gray"},
+    {"hex": "FFFFFF", "de": "Weiß",       "en": "White"},
+    {"hex": "E0301E", "de": "Rot",        "en": "Red"},
+    {"hex": "F08000", "de": "Orange",     "en": "Orange"},
+    {"hex": "F0D000", "de": "Gelb",       "en": "Yellow"},
+    {"hex": "20A020", "de": "Grün",       "en": "Green"},
+    {"hex": "0A5A0A", "de": "Dunkelgrün", "en": "Dark Green"},
+    {"hex": "10B0A0", "de": "Türkis",     "en": "Teal"},
+    {"hex": "60B0E0", "de": "Hellblau",   "en": "Light Blue"},
+    {"hex": "1050C0", "de": "Blau",       "en": "Blue"},
+    {"hex": "0A1A6A", "de": "Dunkelblau", "en": "Dark Blue"},
+    {"hex": "8030C0", "de": "Lila",       "en": "Purple"},
+    {"hex": "AE96D4", "de": "Flieder",    "en": "Lilac"},
+    {"hex": "F060A0", "de": "Rosa",       "en": "Pink"},
+    {"hex": "E0108A", "de": "Pink",       "en": "Magenta"},
+    {"hex": "7A4A20", "de": "Braun",      "en": "Brown"},
+    {"hex": "D8C8A8", "de": "Beige",      "en": "Beige"},
+    {"hex": "C0A030", "de": "Gold",       "en": "Gold"},
+    {"hex": "C8C8D0", "de": "Silber",     "en": "Silver"},
 ]
 
 
@@ -41,14 +53,13 @@ def color_name(hex6, lang="de"):
     if rgb is None:
         return ""
     r, g, b = rgb
+    key = i18n.normalize(lang)  # 'de' | 'en' — the explicit language key
     best, bestd = "", None
-    pick = 1 if i18n.normalize(lang) == "en" else 0
     for entry in _PALETTE:
-        name, ph = entry[pick], entry[2]
-        pr, pg, pb = _rgb(ph)
+        pr, pg, pb = _rgb(entry["hex"])
         d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
         if bestd is None or d < bestd:
-            best, bestd = name, d
+            best, bestd = entry[key], d
     return best
 
 
