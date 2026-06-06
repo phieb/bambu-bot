@@ -33,6 +33,35 @@ _EJECT = re.compile(r"^\s*!\s*(eject|auswurf|auswerfen)(?:\s+(on|an|ein|off|aus|
 # Adopt queue jobs not sent through the bot (Studio Send / VP / web UI) so they
 # also get finished/failed notifications.
 _SYNC = re.compile(r"^\s*!\s*(sync|synchronisieren|scan|übernehmen|uebernehmen)\s*$", re.I)
+# Switch the group's reply language (default stays German). Either a direct
+# shortcut (!english / !deutsch) or !lang/!sprache with an optional argument
+# (no argument → show the current language).
+_LANG = re.compile(
+    r"^\s*!\s*(lang|language|sprache|en|eng|english|englisch|de|deutsch|german|ger)"
+    r"(?:\s+(en|eng|english|englisch|de|deutsch|german|ger))?\s*$",
+    re.I,
+)
+_EN_WORDS = ("en", "eng", "english", "englisch")
+_DE_WORDS = ("de", "deutsch", "german", "ger")
+
+
+def lang_command(message):
+    """('en'|'de'|'show') if the message is a language command, else None.
+    'show' means !lang/!sprache without an argument (report the current one)."""
+    m = _LANG.match(message or "")
+    if not m:
+        return None
+    head, arg = m.group(1).lower(), (m.group(2) or "").lower()
+    if head in _EN_WORDS:
+        return "en"
+    if head in _DE_WORDS:
+        return "de"
+    # head is lang/language/sprache → decide from the (optional) argument
+    if arg in _EN_WORDS:
+        return "en"
+    if arg in _DE_WORDS:
+        return "de"
+    return "show"
 
 
 def eject_command(message):
@@ -210,6 +239,7 @@ def classify(envelope):
         "eject_command": eject_command(message),
         "plate_command": plate_command(message),
         "is_sync": bool(_SYNC.match(message)),
+        "lang_command": lang_command(message),
     }
 
 

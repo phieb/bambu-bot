@@ -3,17 +3,24 @@ printer status, the numbered question text, and parsing the user's reply into
 an ``ams_mapping`` array (index = model filament, value = 0-based AMS tray id)."""
 import re
 
-# Curated German palette for naming a hex value. Covers tones emoji squares
-# can't (Grau/Beige/Rosa/…), so the text stays readable even without the swatch.
+import i18n
+
+# Curated palette for naming a hex value. Covers tones emoji squares can't
+# (Grau/Beige/Rosa/…), so the text stays readable even without the swatch.
+# Each anchor carries its German and English name plus the hex it anchors.
 _PALETTE = [
-    ("Schwarz", "000000"), ("Dunkelgrau", "404040"), ("Grau", "808080"),
-    ("Hellgrau", "C0C0C0"), ("Weiß", "FFFFFF"),
-    ("Rot", "E0301E"), ("Orange", "F08000"), ("Gelb", "F0D000"),
-    ("Grün", "20A020"), ("Dunkelgrün", "0A5A0A"), ("Türkis", "10B0A0"),
-    ("Hellblau", "60B0E0"), ("Blau", "1050C0"), ("Dunkelblau", "0A1A6A"),
-    ("Lila", "8030C0"), ("Flieder", "AE96D4"), ("Rosa", "F060A0"), ("Pink", "E0108A"),
-    ("Braun", "7A4A20"), ("Beige", "D8C8A8"), ("Gold", "C0A030"),
-    ("Silber", "C8C8D0"),
+    ("Schwarz", "Black", "000000"), ("Dunkelgrau", "Dark Gray", "404040"),
+    ("Grau", "Gray", "808080"), ("Hellgrau", "Light Gray", "C0C0C0"),
+    ("Weiß", "White", "FFFFFF"),
+    ("Rot", "Red", "E0301E"), ("Orange", "Orange", "F08000"),
+    ("Gelb", "Yellow", "F0D000"), ("Grün", "Green", "20A020"),
+    ("Dunkelgrün", "Dark Green", "0A5A0A"), ("Türkis", "Teal", "10B0A0"),
+    ("Hellblau", "Light Blue", "60B0E0"), ("Blau", "Blue", "1050C0"),
+    ("Dunkelblau", "Dark Blue", "0A1A6A"), ("Lila", "Purple", "8030C0"),
+    ("Flieder", "Lilac", "AE96D4"), ("Rosa", "Pink", "F060A0"),
+    ("Pink", "Magenta", "E0108A"), ("Braun", "Brown", "7A4A20"),
+    ("Beige", "Beige", "D8C8A8"), ("Gold", "Gold", "C0A030"),
+    ("Silber", "Silver", "C8C8D0"),
 ]
 
 
@@ -27,14 +34,17 @@ def _rgb(hex6):
         return None
 
 
-def color_name(hex6):
-    """Nearest German color name for a hex value, or "" if unparseable."""
+def color_name(hex6, lang="de"):
+    """Nearest color name for a hex value in ``lang`` (default German), or "" if
+    unparseable."""
     rgb = _rgb(hex6)
     if rgb is None:
         return ""
     r, g, b = rgb
     best, bestd = "", None
-    for name, ph in _PALETTE:
+    pick = 1 if i18n.normalize(lang) == "en" else 0
+    for entry in _PALETTE:
+        name, ph = entry[pick], entry[2]
         pr, pg, pb = _rgb(ph)
         d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
         if bestd is None or d < bestd:
@@ -80,9 +90,10 @@ def required_colors(resolved):
     return out
 
 
-def model_name(resolved):
+def model_name(resolved, lang="de"):
     design = resolved.get("design") or {}
-    return design.get("title") or design.get("name") or "Modell"
+    fallback = "Model" if i18n.normalize(lang) == "en" else "Modell"
+    return design.get("title") or design.get("name") or fallback
 
 
 def cover_url(resolved):
@@ -123,25 +134,32 @@ def profiles_list(resolved, target=""):
     return out
 
 
-def build_profile_question(name, profiles, target="P1S"):
+def build_profile_question(name, profiles, target="P1S", lang="de"):
+    en = i18n.normalize(lang) == "en"
     n_target = sum(1 for p in profiles if p["is_target"])
-    head = f'🧩 „{name}" hat {len(profiles)} Profile'
-    if n_target:
-        head += f" ({n_target} davon für deinen {target})"
+    if en:
+        head = f'🧩 „{name}" has {len(profiles)} profiles'
+        if n_target:
+            head += f" ({n_target} of them for your {target})"
+        by = "by"
+        prompt = "\n\nWhich profile do you want to print? Reply with the number."
+    else:
+        head = f'🧩 „{name}" hat {len(profiles)} Profile'
+        if n_target:
+            head += f" ({n_target} davon für deinen {target})"
+        by = "von"
+        prompt = "\n\nWelches Profil willst du drucken? Antworte mit der Zahl."
     lines = []
     for i, p in enumerate(profiles, 1):
         mark = "✅" if p["is_target"] else "▫️"
         extra = []
         if p["author"]:
-            extra.append(f"von {p['author']}")
+            extra.append(f"{by} {p['author']}")
         if p["score"]:
             extra.append(f"★{p['score']}")
         tail = (" · " + " · ".join(extra)) if extra else ""
         lines.append(f'{i}. {mark} {p["printer"]} · „{p["title"]}"{tail}')
-    return (
-        f"{head}:\n" + "\n".join(lines) +
-        "\n\nWelches Profil willst du drucken? Antworte mit der Zahl."
-    )
+    return f"{head}:\n" + "\n".join(lines) + prompt
 
 
 def plate_required(plate):
@@ -162,11 +180,12 @@ def _fmt_minutes(seconds):
     return f"{m} min" if m < 60 else f"{m // 60}h{m % 60:02d}"
 
 
-def build_plate_question(name, plates):
+def build_plate_question(name, plates, lang="de"):
+    en = i18n.normalize(lang) == "en"
     lines = []
     for i, p in enumerate(plates, 1):
         cols = ", ".join(
-            f"{f.get('type') or ''} {color_name(f.get('color'))}".strip()
+            f"{f.get('type') or ''} {color_name(f.get('color'), lang)}".strip()
             for f in (p.get("filaments") or [])
         )
         meta = []
@@ -177,10 +196,13 @@ def build_plate_question(name, plates):
         tail = (" · " + " · ".join(meta)) if meta else ""
         pname = p.get("name") or f"Plate {p.get('index')}"
         lines.append(f'{i}. „{pname}" — {cols or "?"}{tail}')
-    return (
-        f'🗂️ „{name}" hat {len(plates)} Plates:\n' + "\n".join(lines) +
-        "\n\nWelche willst du drucken? Eine oder mehrere Zahlen, z.B. „1“ oder „1 3“."
-    )
+    if en:
+        head = f'🗂️ „{name}" has {len(plates)} plates:\n'
+        prompt = '\n\nWhich do you want to print? One or more numbers, e.g. „1“ or „1 3“.'
+    else:
+        head = f'🗂️ „{name}" hat {len(plates)} Plates:\n'
+        prompt = "\n\nWelche willst du drucken? Eine oder mehrere Zahlen, z.B. „1“ oder „1 3“."
+    return head + "\n".join(lines) + prompt
 
 
 def ams_snapshot(status):
@@ -201,56 +223,115 @@ def ams_snapshot(status):
     return out
 
 
-HELP_TEXT = (
-    "🤖 Befehle (einfach hier reinschreiben):\n"
-    "• MakerWorld-Link → neuer Druckauftrag\n"
-    "• Datei-Anhang oder Direkt-Link (.3mf/.gcode/.stl/.zip) → direkt drucken\n"
-    "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
-    "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
-    "• !liste → zeigt die Druck-Queue\n"
-    "• !sync → übernimmt Jobs, die nicht über mich liefen (z.B. Studio), für Fertig-Meldungen\n"
-    "• !go → Platte ist frei, nächsten Druck starten\n"
-    "• !eject on/off → Auto-Auswurf (Farmloop) ein/aus; „!eject“ zeigt den Status\n"
-    "• !platte cool/textured/smooth/… → Druckplatte setzen (für Bett-Temp); „!platte“ zeigt sie\n"
-    "• !skip → aktuelles Plate überspringen (z.B. Farbe fehlt), Rest bleibt\n"
-    "• !abbrechen → restliche Plates verwerfen (schon konfigurierte werden "
-    "eingereiht); ohne offenen Dialog: letzten wartenden Queue-Job entfernen\n"
-    "• !help → diese Übersicht\n"
-    "Wenn dein Druck fertig ist, meld ich mich automatisch."
-)
+_HELP_TEXT = {
+    "de": (
+        "🤖 Befehle (einfach hier reinschreiben):\n"
+        "• MakerWorld-Link → neuer Druckauftrag\n"
+        "• Datei-Anhang oder Direkt-Link (.3mf/.gcode/.stl/.zip) → direkt drucken\n"
+        "• Zahlen, z.B. „3 1 2“ → Farben den AMS-Slots zuordnen\n"
+        "• !progress → aktueller Druck (%, Layer, Restzeit) + Live-Foto\n"
+        "• !liste → zeigt die Druck-Queue\n"
+        "• !sync → übernimmt Jobs, die nicht über mich liefen (z.B. Studio), für Fertig-Meldungen\n"
+        "• !go → Platte ist frei, nächsten Druck starten\n"
+        "• !eject on/off → Auto-Auswurf (Farmloop) ein/aus; „!eject“ zeigt den Status\n"
+        "• !platte cool/textured/smooth/… → Druckplatte setzen (für Bett-Temp); „!platte“ zeigt sie\n"
+        "• !skip → aktuelles Plate überspringen (z.B. Farbe fehlt), Rest bleibt\n"
+        "• !abbrechen → restliche Plates verwerfen (schon konfigurierte werden "
+        "eingereiht); ohne offenen Dialog: letzten wartenden Queue-Job entfernen\n"
+        "• !english → auf Englisch umstellen\n"
+        "• !help → diese Übersicht\n"
+        "Wenn dein Druck fertig ist, meld ich mich automatisch."
+    ),
+    "en": (
+        "🤖 Commands (just type them here):\n"
+        "• MakerWorld link → new print job\n"
+        "• File attachment or direct link (.3mf/.gcode/.stl/.zip) → print directly\n"
+        "• Numbers, e.g. „3 1 2“ → map colors to AMS slots\n"
+        "• !progress → current print (%, layer, time left) + live photo\n"
+        "• !list → shows the print queue\n"
+        "• !sync → adopts jobs not sent through me (e.g. Studio) for done notifications\n"
+        "• !go → plate is clear, start the next print\n"
+        "• !eject on/off → auto-eject (Farmloop) on/off; „!eject“ shows the status\n"
+        "• !plate cool/textured/smooth/… → set the build plate (for bed temp); „!plate“ shows it\n"
+        "• !skip → skip the current plate (e.g. color missing), keep the rest\n"
+        "• !cancel → discard the remaining plates (already-configured ones get "
+        "queued); with no open dialog: remove the last waiting queue job\n"
+        "• !deutsch → switch to German\n"
+        "• !help → this overview\n"
+        "When your print is done, I'll message you automatically."
+    ),
+}
 
-_HINT = "💡 mehrere Plates? !skip überspringt eins · !abbrechen reiht die fertigen ein · !liste · !go"
+_HINT = {
+    "de": "💡 mehrere Plates? !skip überspringt eins · !abbrechen reiht die fertigen ein · !liste · !go",
+    "en": "💡 multiple plates? !skip skips one · !cancel queues the finished ones · !list · !go",
+}
 
-UNKNOWN_TEXT = "🤔 Da kenn ich mich nicht aus. Das kann ich:\n\n" + HELP_TEXT
+_OTHER_MODEL_TEXT = {
+    "de": (
+        "🔗 Das sieht nach einem 3D-Modell-Link aus — Links automatisch auflösen kann "
+        "ich aber nur bei **MakerWorld**.\n"
+        "Für Printables/Cults3D/Thingiverse & Co.: lad die Datei runter und **schick "
+        "sie mir direkt als Anhang** (.3mf, .gcode oder .stl) — die reihe ich dann ein."
+    ),
+    "en": (
+        "🔗 That looks like a 3D-model link — but I can only auto-resolve links from "
+        "**MakerWorld**.\n"
+        "For Printables/Cults3D/Thingiverse & co.: download the file and **send it to "
+        "me directly as an attachment** (.3mf, .gcode or .stl) — then I'll queue it."
+    ),
+}
 
-OTHER_MODEL_TEXT = (
-    "🔗 Das sieht nach einem 3D-Modell-Link aus — Links automatisch auflösen kann "
-    "ich aber nur bei **MakerWorld**.\n"
-    "Für Printables/Cults3D/Thingiverse & Co.: lad die Datei runter und **schick "
-    "sie mir direkt als Anhang** (.3mf, .gcode oder .stl) — die reihe ich dann ein."
-)
+
+def help_text(lang="de"):
+    return _HELP_TEXT[i18n.normalize(lang)]
 
 
-def build_question(name, required, ams):
+def hint(lang="de"):
+    return _HINT[i18n.normalize(lang)]
+
+
+def unknown_text(lang="de"):
+    en = i18n.normalize(lang) == "en"
+    head = ("🤔 I'm not sure what that means. Here's what I can do:\n\n" if en
+            else "🤔 Da kenn ich mich nicht aus. Das kann ich:\n\n")
+    return head + help_text(lang)
+
+
+def other_model_text(lang="de"):
+    return _OTHER_MODEL_TEXT[i18n.normalize(lang)]
+
+
+def build_question(name, required, ams, lang="de"):
+    en = i18n.normalize(lang) == "en"
+    color_word = "Color" if en else "Farbe"
     color_lines = "\n".join(
-        f"Farbe {c['index'] + 1}: {c['type']} {color_name(c['color'])}".rstrip() for c in required
+        f"{color_word} {c['index'] + 1}: {c['type']} {color_name(c['color'], lang)}".rstrip()
+        for c in required
     )
     ams_lines = "\n".join(
-        f"  {a['slot']}) {a['type']} {color_name(a['color'])}".rstrip()
+        f"  {a['slot']}) {a['type']} {color_name(a['color'], lang)}".rstrip()
         + (f" {a['sub']}" if a["sub"] else "")
         for a in ams
     )
     maxslot = len(ams) or 1
     example = " ".join(str((i % maxslot) + 1) for i in range(len(required)))
+    if en:
+        return (
+            f'🎨 "{name}" needs {len(required)} color(s):\n{color_lines}\n\n'
+            f"AMS slots:\n{ams_lines}\n\n"
+            f"Reply with one slot per color (in order), e.g.: {example}\n\n"
+            f"{hint(lang)}"
+        )
     return (
         f'🎨 "{name}" braucht {len(required)} Farbe(n):\n{color_lines}\n\n'
         f"AMS Slots:\n{ams_lines}\n\n"
         f"Antworte mit einem Slot pro Farbe (in Reihenfolge), z.B: {example}\n\n"
-        f"{_HINT}"
+        f"{hint(lang)}"
     )
 
 
-def parse_reply(message, required, ams):
+def parse_reply(message, required, ams, lang="de"):
     """Return (ok, ams_mapping|None, error_text|None).
 
     ams_mapping[i] = AMS tray id (0-based) chosen for model filament i.
@@ -258,8 +339,11 @@ def parse_reply(message, required, ams):
     nums = [int(x) for x in re.findall(r"\d+", message or "")]
     maxslot = len(ams) or 4
     if len(required) == 0 or len(nums) != len(required) or any(n < 1 or n > maxslot for n in nums):
-        return False, None, (
-            f"⚠️ Konnte das nicht zuordnen. Bitte {len(required)} Zahl(en) "
-            f"zwischen 1 und {maxslot} schicken, eine pro Farbe."
-        )
+        if i18n.normalize(lang) == "en":
+            err = (f"⚠️ Couldn't map that. Please send {len(required)} number(s) "
+                   f"between 1 and {maxslot}, one per color.")
+        else:
+            err = (f"⚠️ Konnte das nicht zuordnen. Bitte {len(required)} Zahl(en) "
+                   f"zwischen 1 und {maxslot} schicken, eine pro Farbe.")
+        return False, None, err
     return True, [n - 1 for n in nums], None
