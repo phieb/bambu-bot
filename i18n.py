@@ -352,6 +352,48 @@ _M = {
         "en": "🔄 Adopted {n} job(s) — I'll report when they're done:\n{lines}",
     },
 
+    # ----- !abo -----
+    "abo_help": {
+        "de": ("🔔 Abo — Benachrichtigungen für Start & Ende eines Drucks.\n"
+               "🔔 = abonniert, 🔕 = nicht.\n{lines}\n\n"
+               "• !abo all → alle abonnieren\n"
+               "• !abo 2 3 → nur diese Nummern\n"
+               "• !abo stop (oder !deabo) → alle abbestellen, !abo stop 2 → nur Nummer 2"),
+        "en": ("🔔 Subscriptions — get notified about a print's start & finish.\n"
+               "🔔 = subscribed, 🔕 = not.\n{lines}\n\n"
+               "• !abo all → subscribe to all\n"
+               "• !abo 2 3 → only these numbers\n"
+               "• !abo stop (or !deabo) → unsubscribe all, !abo stop 2 → only number 2"),
+    },
+    "abo_help_empty": {
+        "de": ("🔔 Keine offenen Drucke in der Queue.\n"
+               "Sobald welche da sind: !abo all abonniert alle, "
+               "!abo 2 3 nur bestimmte Nummern aus !liste."),
+        "en": ("🔔 No open prints in the queue.\n"
+               "Once there are some: !abo all subscribes to all, "
+               "!abo 2 3 only specific numbers from !list."),
+    },
+    "abo_subscribed": {
+        "de": "🔔 {n} Druck(e) abonniert — ich melde Start & Ende:\n{lines}",
+        "en": "🔔 Subscribed to {n} print(s) — I'll report start & finish:\n{lines}",
+    },
+    "abo_already": {
+        "de": "🔔 Schon abonniert — keine neuen Drucke hinzugefügt.",
+        "en": "🔔 Already subscribed — nothing new added.",
+    },
+    "abo_unsubscribed": {
+        "de": "🔕 {n} Abo(s) beendet — keine Benachrichtigungen mehr dafür.",
+        "en": "🔕 Unsubscribed from {n} print(s) — no more notifications for those.",
+    },
+    "abo_nothing_subbed": {
+        "de": "🔕 Da war kein Abo zum Beenden.",
+        "en": "🔕 Nothing was subscribed to unsubscribe from.",
+    },
+    "abo_bad_pos": {
+        "de": "⚠️ Nummer(n) {positions} gibt's nicht — die Queue hat {n} offene(n) Druck(e). (!liste)",
+        "en": "⚠️ Number(s) {positions} don't exist — the queue has {n} open print(s). (!list)",
+    },
+
     # ----- !progress -----
     "progress_idle": {
         "de": "🖨️ Drucker ist {state} — gerade kein Druck.",
