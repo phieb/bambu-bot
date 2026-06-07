@@ -7,6 +7,12 @@ does the work via `/receive`. It turns model links **and uploaded files** into
 print jobs on [Bambuddy](https://github.com/maziggy/bambuddy), talking back over
 a Signal REST API.
 
+<p align="center">
+  <img src="docs/screenshot-progress.png" alt="!progress reply: live print status with a camera snapshot" width="320">
+</p>
+
+<p align="center"><em><code>!progress</code> — live status (%, layer, ETA) with a fresh camera snapshot.</em></p>
+
 ## Flow
 
 ```
@@ -51,6 +57,16 @@ All of these end up in the same plate → color → re-slice → queue tail:
   a multi-plate 3MF. STLs inside the zip are arranged onto the bed too.
 
 ## Dialog state machine
+
+A MakerWorld link runs the full dialog — pick a profile, pick plate(s), pick colors:
+
+<p align="center">
+  <img src="docs/dialog-1-profile.png" alt="Step 1: profile selection from a MakerWorld link" width="250">
+  <img src="docs/dialog-2-plates.png" alt="Step 2: plate selection with numbered thumbnails" width="250">
+  <img src="docs/dialog-3-colors.png" alt="Step 3: per-filament AMS color selection" width="250">
+</p>
+
+<p align="center"><em>From a MakerWorld link: <strong>1.</strong> profile (P1S profiles flagged) → <strong>2.</strong> plate(s), numbered thumbnails, multi-select → <strong>3.</strong> colors per filament from the AMS slots.</em></p>
 
 Each step is a **numbered reply**; steps with one option auto-skip:
 
@@ -103,6 +119,12 @@ first". Every stage transition is idempotent (atomic claim).
 | `!abbrechen` / `!cancel` | Queue the already-configured plates and drop the rest; with nothing configured, discard the dialog; with no dialog, delete the last *pending* queue item (a running print is never stopped) |
 | `!english` / `!deutsch` / `!lang <de\|en>` | Switch this group's reply language. See **Localization** below. |
 | `!help` / `!hilfe` | Command overview |
+
+<p align="center">
+  <img src="docs/screenshot-commands.png" alt="!eject, !go and !sync commands in a group" width="320">
+</p>
+
+<p align="center"><em>Group commands in action: <code>!eject on</code>, <code>!go</code>, and <code>!sync</code> adopting jobs queued outside the bot.</em></p>
 
 In a **registered group the bot claims every message** (so nothing leaks to other
 tools); unrecognized text gets a friendly "here's what I can do" reply. When a
