@@ -58,6 +58,16 @@ All of these end up in the same plate → color → re-slice → queue tail:
 
 ## Dialog state machine
 
+A MakerWorld link runs the full dialog — pick a profile, pick plate(s), pick colors:
+
+<p align="center">
+  <img src="docs/dialog-1-profile.png" alt="Step 1: profile selection from a MakerWorld link" width="250">
+  <img src="docs/dialog-2-plates.png" alt="Step 2: plate selection with numbered thumbnails" width="250">
+  <img src="docs/dialog-3-colors.png" alt="Step 3: per-filament AMS color selection" width="250">
+</p>
+
+<p align="center"><em>From a MakerWorld link: <strong>1.</strong> profile (P1S profiles flagged) → <strong>2.</strong> plate(s), numbered thumbnails, multi-select → <strong>3.</strong> colors per filament from the AMS slots.</em></p>
+
 Each step is a **numbered reply**; steps with one option auto-skip:
 
 1. **Profile** — MakerWorld only: if several print profiles, ask which (profiles
