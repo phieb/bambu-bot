@@ -33,6 +33,60 @@ _EJECT = re.compile(r"^\s*!\s*(eject|auswurf|auswerfen)(?:\s+(on|an|ein|off|aus|
 # Adopt queue jobs not sent through the bot (Studio Send / VP / web UI) so they
 # also get finished/failed notifications.
 _SYNC = re.compile(r"^\s*!\s*(sync|synchronisieren|scan|übernehmen|uebernehmen)\s*$", re.I)
+# Subscribe this group to start/finish notifications for queue prints — "all" or
+# the position numbers shown by !liste (e.g. "!abo 2 3"). !abo with no argument
+# shows help + which prints you're subscribed to; "!abo stop [..]" / !deabo
+# unsubscribes (all, or the given positions).
+_ABO = re.compile(r"^\s*!\s*(?:abo|abonnieren|subscribe)(?:\s+(.*?))?\s*$", re.I)
+_DEABO = re.compile(r"^\s*!\s*(?:deabo|de-abo|abbestellen|unsubscribe)(?:\s+(.*?))?\s*$", re.I)
+_ALL_WORDS = ("all", "alle", "alles")
+_STOP_WORDS = ("stop", "stopp", "aus", "off", "ende")
+
+
+def _abo_positions(arg):
+    """Parse '2 3' / '2,4,1' into [2,3] / [2,4,1]; None if it isn't all numbers."""
+    out = []
+    for tok in re.split(r"[\s,]+", arg.strip()):
+        if not tok:
+            continue
+        if not tok.isdigit():
+            return None
+        out.append(int(tok))
+    return out or None
+
+
+def abo_command(message):
+    """Parse an !abo / !deabo command. None if it isn't one; else a dict:
+    {'action':'help'},
+    {'action':'subscribe','all':bool,'positions':[int]}, or
+    {'action':'unsubscribe','all':bool,'positions':[int]}.
+    Positions refer to the 1-based order shown by !liste. Unknown arguments fall
+    back to {'action':'help'} so a typo shows usage instead of doing nothing."""
+    m = _ABO.match(message or "")
+    deabo = False
+    if not m:
+        m = _DEABO.match(message or "")
+        deabo = True
+    if not m:
+        return None
+    arg = (m.group(1) or "").strip().lower()
+
+    def _resolve(rest, action):
+        if not rest or rest in _ALL_WORDS:
+            return {"action": action, "all": True, "positions": []}
+        pos = _abo_positions(rest)
+        if pos is None:
+            return {"action": "help"}
+        return {"action": action, "all": False, "positions": pos}
+
+    if deabo:
+        return _resolve(arg, "unsubscribe")
+    if not arg:
+        return {"action": "help"}
+    parts = arg.split(None, 1)
+    if parts[0] in _STOP_WORDS:
+        return _resolve(parts[1] if len(parts) > 1 else "", "unsubscribe")
+    return _resolve(arg, "subscribe")
 # Switch the group's reply language (default stays German). Either a direct
 # shortcut (!english / !deutsch) or !lang/!sprache with an optional argument
 # (no argument → show the current language).
@@ -239,6 +293,7 @@ def classify(envelope):
         "eject_command": eject_command(message),
         "plate_command": plate_command(message),
         "is_sync": bool(_SYNC.match(message)),
+        "abo_command": abo_command(message),
         "lang_command": lang_command(message),
     }
 

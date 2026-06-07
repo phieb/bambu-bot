@@ -93,6 +93,8 @@ def _route(parsed):
         return "group_plate"
     if parsed["is_sync"]:
         return "group_sync"
+    if parsed["abo_command"]:
+        return "group_abo"
     if parsed["lang_command"]:
         return "group_lang"
     if parsed["is_numbered"]:
@@ -171,6 +173,8 @@ async def handle(envelope):
             await _plate(parsed["group_send_id"], parsed["plate_command"])
         elif route == "group_sync":
             await _sync(parsed["group_send_id"])
+        elif route == "group_abo":
+            await _abo(parsed["group_send_id"], parsed["abo_command"])
         elif route == "group_help":
             gid = parsed["group_send_id"]
             await signal_client.send_to_group(gid, colors.help_text(_lang(gid)))
@@ -1043,11 +1047,22 @@ async def _cancel(group_id):
         )
 
 
+def _item_name(it):
+    """Best display name for a Bambuddy queue item, falling back to '#<id>'."""
+    return (it.get("library_file_name") or it.get("archive_name")
+            or it.get("target_model") or f'#{it.get("id")}')
+
+
+async def _open_queue():
+    """Open (not finished) queue items, in the order !liste numbers them."""
+    items = await bambuddy.list_queue()
+    return [it for it in (items or [])
+            if (it.get("status") or "").lower() not in _DONE_QUEUE_STATUS]
+
+
 async def _list(group_id):
     lang = _lang(group_id)
-    items = await bambuddy.list_queue()
-    open_items = [it for it in (items or [])
-                  if (it.get("status") or "").lower() not in _DONE_QUEUE_STATUS]
+    open_items = await _open_queue()
     if not open_items:
         await signal_client.send_to_group(group_id, i18n.t(lang, "list_empty"))
         return
@@ -1056,8 +1071,7 @@ async def _list(group_id):
     noeject_tag = i18n.t(lang, "list_noeject_tag")
     lines = []
     for i, it in enumerate(open_items, 1):
-        nm = (it.get("library_file_name") or it.get("archive_name")
-              or it.get("target_model") or f'#{it.get("id")}')
+        nm = _item_name(it)
         st = it.get("status") or "?"
         # eject tag: 🧹 = with auto-eject, ✋ = without; nothing for jobs the bot
         # didn't queue (e.g. a Bambu Studio print — we don't know).
@@ -1075,27 +1089,18 @@ async def _list(group_id):
 async def _sync(group_id):
     """Adopt open queue jobs that weren't sent through the bot (Bambu Studio Send,
     Virtual Printer, web UI) as completion trackers for THIS group, so they get
-    the same 'started/finished/failed' notifications. Items THIS group already
-    tracks (incl. earlier syncs and its own jobs) and finished ones are skipped, so
-    it's safe to run repeatedly. Items another group already tracks ARE adopted —
-    so everyone who runs !sync gets notified about a print's start and finish,
-    even if that means more than one person hears about the same print."""
+    the same 'started/finished/failed' notifications. Already-tracked items (incl.
+    earlier syncs and the bot's own jobs) and finished ones are skipped, so it's
+    safe to run repeatedly."""
     items = await bambuddy.list_queue()
-    tracked = store.tracked_item_ids(group_id)
+    tracked = store.tracked_item_ids()
     adopted = []
     for it in items or []:
         iid = it.get("id")
         status = (it.get("status") or "").lower()
         if iid is None or iid in tracked or status in _DONE_QUEUE_STATUS:
             continue
-        name = (it.get("library_file_name") or it.get("archive_name")
-                or it.get("target_model") or f'#{iid}')
-        jid = store.add_queued(group_id, "", name, None, iid, eject=False)
-        # Already mid-print → track at 'printing' so it only fires the finished
-        # message, not a misleading "starts now".
-        if status == "printing":
-            store.set_stage(jid, "printing")
-        adopted.append(name)
+        adopted.append(_adopt_item(group_id, it))
     lang = _lang(group_id)
     if not adopted:
         await signal_client.send_to_group(group_id, i18n.t(lang, "sync_in_sync"))
@@ -1103,6 +1108,80 @@ async def _sync(group_id):
     lines = "\n".join(f"  • {n}" for n in adopted)
     await signal_client.send_to_group(
         group_id, i18n.t(lang, "sync_adopted", n=len(adopted), lines=lines))
+
+
+def _adopt_item(group_id, it):
+    """Create a completion tracker for ``it`` under ``group_id`` and return its
+    display name. Caller is responsible for skipping already-tracked/finished
+    items. A mid-print item is tracked at 'printing' so it only fires the finished
+    message, not a misleading 'starts now'."""
+    name = _item_name(it)
+    jid = store.add_queued(group_id, "", name, None, it.get("id"), eject=False)
+    if (it.get("status") or "").lower() == "printing":
+        store.set_stage(jid, "printing")
+    return name
+
+
+async def _abo(group_id, cmd):
+    """Subscribe a group to start/finish notifications for queue prints — by !liste
+    position or "all" — so more than one person can be notified about the same
+    print. !abo (no arg) shows usage + current subscriptions; !abo stop / !deabo
+    unsubscribes. See classify.abo_command for the parsed ``cmd`` shape."""
+    lang = _lang(group_id)
+    action = cmd["action"]
+
+    # Mute everything without touching the live queue (so prints that already
+    # aged out of Bambuddy can still be unsubscribed).
+    if action == "unsubscribe" and cmd["all"]:
+        removed = store.untrack_all(group_id)
+        key = "abo_unsubscribed" if removed else "abo_nothing_subbed"
+        await signal_client.send_to_group(group_id, i18n.t(lang, key, n=removed))
+        return
+
+    open_items = await _open_queue()
+    tracked = store.tracked_item_ids(group_id)
+
+    if action == "help":
+        if not open_items:
+            await signal_client.send_to_group(group_id, i18n.t(lang, "abo_help_empty"))
+            return
+        lines = "\n".join(
+            f'{i}. {"🔔" if it.get("id") in tracked else "🔕"} {_item_name(it)}'
+            for i, it in enumerate(open_items, 1))
+        await signal_client.send_to_group(group_id, i18n.t(lang, "abo_help", lines=lines))
+        return
+
+    # Resolve the targeted items: all open ones, or the given !liste positions.
+    if cmd["all"]:
+        targets = list(open_items)
+    else:
+        targets, bad = [], []
+        for p in cmd["positions"]:
+            if 1 <= p <= len(open_items):
+                targets.append(open_items[p - 1])
+            else:
+                bad.append(p)
+        if bad:
+            await signal_client.send_to_group(group_id, i18n.t(
+                lang, "abo_bad_pos", positions=", ".join(str(b) for b in bad),
+                n=len(open_items)))
+            if not targets:
+                return
+
+    if action == "subscribe":
+        adopted = [_adopt_item(group_id, it) for it in targets
+                   if it.get("id") is not None and it.get("id") not in tracked]
+        if not adopted:
+            await signal_client.send_to_group(group_id, i18n.t(lang, "abo_already"))
+            return
+        lines = "\n".join(f"  • {n}" for n in adopted)
+        await signal_client.send_to_group(
+            group_id, i18n.t(lang, "abo_subscribed", n=len(adopted), lines=lines))
+    else:  # unsubscribe specific positions
+        ids = [it.get("id") for it in targets if it.get("id") is not None]
+        removed = store.untrack_items(group_id, ids)
+        key = "abo_unsubscribed" if removed else "abo_nothing_subbed"
+        await signal_client.send_to_group(group_id, i18n.t(lang, key, n=removed))
 
 
 _ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"}

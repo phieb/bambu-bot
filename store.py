@@ -276,10 +276,11 @@ def set_stage(job_id, stage):
 
 
 def tracked_item_ids(group_id=None):
-    """Bambuddy queue_item_ids the bot already has a tracker for (any stage), so
-    !sync doesn't double-adopt a job it already watches. Scoped to one group when
-    ``group_id`` is given — so every group can independently adopt (and get
-    notified for) the same print; global across all groups otherwise."""
+    """Bambuddy queue_item_ids the bot already has a tracker for (any stage), so a
+    command doesn't double-adopt a job it already watches. Global across all groups
+    by default (used by !sync); scoped to one group when ``group_id`` is given (used
+    by !abo, so each group can independently subscribe to — and get notified for —
+    the same print)."""
     q = "SELECT DISTINCT queue_item_id FROM jobs WHERE queue_item_id IS NOT NULL"
     params = ()
     if group_id is not None:
@@ -288,6 +289,34 @@ def tracked_item_ids(group_id=None):
     with _conn() as c:
         rows = c.execute(q, params).fetchall()
         return {r["queue_item_id"] for r in rows}
+
+
+def untrack_items(group_id, item_ids):
+    """Drop a group's active trackers for the given Bambuddy queue_item_ids (used
+    by !abo stop <n>). Only mutes notifications for this group — the print itself
+    is untouched. Returns how many trackers were removed."""
+    if not item_ids:
+        return 0
+    qs = ",".join("?" * len(item_ids))
+    with _conn() as c:
+        cur = c.execute(
+            f"DELETE FROM jobs WHERE group_id=? AND stage IN ('queued','printing') "
+            f"AND queue_item_id IN ({qs})",
+            (group_id, *item_ids),
+        )
+        return cur.rowcount
+
+
+def untrack_all(group_id):
+    """Drop all of a group's active trackers (used by !abo stop / !deabo) so it
+    stops getting start/finish notifications. The prints themselves keep running.
+    Returns how many trackers were removed."""
+    with _conn() as c:
+        cur = c.execute(
+            "DELETE FROM jobs WHERE group_id=? AND stage IN ('queued','printing')",
+            (group_id,),
+        )
+        return cur.rowcount
 
 
 def queued_jobs_with_item():

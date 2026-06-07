@@ -58,26 +58,3 @@ def test_sync_is_idempotent(tmp_path, monkeypatch):
     asyncio.run(handlers._sync("g1"))
     assert len(store.queued_jobs_with_item()) == 1   # not double-added
     assert "synchron" in sent[-1]
-
-
-def test_sync_adopts_per_group_so_multiple_people_get_notified(tmp_path, monkeypatch):
-    # A print already tracked by g1 (queued via the bot, or g1 synced earlier).
-    # When g2 runs !sync it must ALSO adopt it, so both groups get start/finish
-    # notifications — more than one person hears about the same print.
-    sent = _setup(tmp_path, monkeypatch, [
-        {"id": 10, "status": "pending", "library_file_name": "Shared A"},
-    ])
-    store.add_queued("g1", "", "Shared A", None, 10)
-
-    asyncio.run(handlers._sync("g2"))
-
-    jobs = store.queued_jobs_with_item()
-    groups = {j["group_id"] for j in jobs if j["queue_item_id"] == 10}
-    assert groups == {"g1", "g2"}                    # both watch item 10
-    assert "1 Job(s) übernommen" in sent[-1]
-
-    # ...but g2 running it again stays idempotent for its own group.
-    asyncio.run(handlers._sync("g2"))
-    g2_jobs = [j for j in store.queued_jobs_with_item()
-               if j["group_id"] == "g2" and j["queue_item_id"] == 10]
-    assert len(g2_jobs) == 1
