@@ -1204,10 +1204,12 @@ async def _check_completions():
             # running — otherwise re-check next poll (no premature/false start).
             if not printer_active:
                 continue
+            thumb = await _thumbnail(job.get("library_file_id"), job.get("plate_index"))
             await signal_client.send_to_group(
                 job["group_id"],
                 i18n.t(lang, "completion_started", name=job["model_name"],
                        eta=_eta_phrase(pstatus.get("remaining_time"), lang)),
+                attachments=[thumb] if thumb else None,
             )
             store.set_stage(job["id"], "printing")
         elif status == "completed":
