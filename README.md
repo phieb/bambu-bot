@@ -37,7 +37,11 @@ All of these end up in the same plate → color → re-slice → queue tail:
 
 ### File-type handling
 
-- **`.gcode`** — already sliced → queued as-is (no color dialog).
+- **`.gcode` / `.gcode.3mf`** — already sliced. The bot checks the machine
+  markers inside the file (`; machine: P1S`) and **rejects** anything not
+  positively identified as P1S gcode — wrong machine (A1, X1, …), unknown, or
+  raw gcode without markers. No color dialog; the correct plate index is read
+  from the file so the printer doesn't look for a non-existent plate.
 - **`.3mf` / `.stl`** — uploaded, then the plate/color dialog. A raw **STL** is
   first **arranged onto the bed** (centered on `BED_SIZE_MM`/2, dropped to Z=0)
   so the slicer doesn't drop an off-origin object. A file with no plates is
@@ -69,6 +73,19 @@ non-Bambu spools) are skipped because the slicer sidecar can't parse them; it
 falls back to the matching Bambu system preset. Queue items are tagged
 `target_model` so they dispatch without relying on Bambuddy's `default_printer_id`.
 
+**Universal safety gate:** before every `POST /queue/` the bot downloads the
+container and checks the machine marker (`; machine: P1S`). If the file isn't
+positively identified as P1S gcode it is **rejected** — no silent wrong-printer
+print. Foreign-printer gcode is never converted; the bot asks for a P1S slice
+instead. This covers re-slice output, direct `.gcode` uploads, and sidecar
+fallbacks.
+
+**Nozzle gate:** the bot reads the nozzle diameter baked into the slice header
+(`; machine: P1S-0.4`) and compares it with the mounted nozzle reported by the
+printer. A definite mismatch (both known, different) is rejected with a clear
+message. If the mounted nozzle can't be read the job is allowed through (doesn't
+block the common 0.4 mm case).
+
 One open dialog per group; a second link while one is open → "finish current
 first". Every stage transition is idempotent (atomic claim).
 
@@ -89,8 +106,10 @@ first". Every stage transition is idempotent (atomic claim).
 
 In a **registered group the bot claims every message** (so nothing leaks to other
 tools); unrecognized text gets a friendly "here's what I can do" reply. When a
-queued print finishes/fails, the bot messages the group that queued it. Prints
-started through other channels aren't tracked → no Signal update.
+queued job **starts printing** the group gets a notification with the model's
+plate thumbnail attached. When it **finishes or fails**, another message follows.
+Jobs started through other channels (Bambu Studio, web UI) aren't tracked by
+default — use `!sync` to adopt them as trackers for the current group.
 
 ## Localization
 
@@ -157,6 +176,8 @@ All accept the Signal envelope as the bare object, `{envelope:…}`, or
 | `BAMBUDDY_BED_TYPE` | `Cool Plate` — the **initial** build plate baked into re-slices as the slicer's `curr_bed_type` (bed temp + first-layer Z). Changeable at runtime with `!platte` (persisted in sqlite, takes precedence over this). The P1S can't report its mounted plate, so it's set manually. Canonical values: `Cool Plate` / `Engineering Plate` / `High Temp Plate` / `Textured PEI Plate` / `Smooth PEI Plate` / `Cool Plate (SuperTack)` |
 | `BAMBU_GROUP_NAME` | `🖨️ Bambu Print Queue` |
 | `BAMBU_SIGNAL_FOLDER` | `signal` (library folder for uploaded files) |
+| `SLICER_URL` | `http://localhost:3001` (Bambu Studio slicer sidecar — required for re-slicing) |
+| `EJECT_MAX_HEIGHT_MM` | `180` — prints taller than this are refused when `!eject on` (sweep would crash) |
 | `THINGIVERSE_TOKEN` | _(empty → Thingiverse links get the generic reply)_ |
 
 ## State (sqlite, `DB_PATH`)
