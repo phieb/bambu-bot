@@ -7,6 +7,12 @@ does the work via `/receive`. It turns model links **and uploaded files** into
 print jobs on [Bambuddy](https://github.com/maziggy/bambuddy), talking back over
 a Signal REST API.
 
+<p align="center">
+  <img src="docs/screenshot-progress.png" alt="!progress reply: live print status with a camera snapshot" width="320">
+</p>
+
+<p align="center"><em><code>!progress</code> — live status (%, layer, ETA) with a fresh camera snapshot.</em></p>
+
 ## Flow
 
 ```
@@ -103,6 +109,12 @@ first". Every stage transition is idempotent (atomic claim).
 | `!abbrechen` / `!cancel` | Queue the already-configured plates and drop the rest; with nothing configured, discard the dialog; with no dialog, delete the last *pending* queue item (a running print is never stopped) |
 | `!english` / `!deutsch` / `!lang <de\|en>` | Switch this group's reply language. See **Localization** below. |
 | `!help` / `!hilfe` | Command overview |
+
+<p align="center">
+  <img src="docs/screenshot-commands.png" alt="!eject, !go and !sync commands in a group" width="320">
+</p>
+
+<p align="center"><em>Group commands in action: <code>!eject on</code>, <code>!go</code>, and <code>!sync</code> adopting jobs queued outside the bot.</em></p>
 
 In a **registered group the bot claims every message** (so nothing leaks to other
 tools); unrecognized text gets a friendly "here's what I can do" reply. When a
