@@ -275,13 +275,18 @@ def set_stage(job_id, stage):
         c.execute("UPDATE jobs SET stage=?, updated_at=? WHERE id=?", (stage, time.time(), job_id))
 
 
-def tracked_item_ids():
-    """All Bambuddy queue_item_ids the bot already has a tracker for (any stage),
-    so !sync doesn't double-adopt a job it (or a previous sync) already watches."""
+def tracked_item_ids(group_id=None):
+    """Bambuddy queue_item_ids the bot already has a tracker for (any stage), so
+    !sync doesn't double-adopt a job it already watches. Scoped to one group when
+    ``group_id`` is given — so every group can independently adopt (and get
+    notified for) the same print; global across all groups otherwise."""
+    q = "SELECT DISTINCT queue_item_id FROM jobs WHERE queue_item_id IS NOT NULL"
+    params = ()
+    if group_id is not None:
+        q += " AND group_id=?"
+        params = (group_id,)
     with _conn() as c:
-        rows = c.execute(
-            "SELECT DISTINCT queue_item_id FROM jobs WHERE queue_item_id IS NOT NULL"
-        ).fetchall()
+        rows = c.execute(q, params).fetchall()
         return {r["queue_item_id"] for r in rows}
 
 

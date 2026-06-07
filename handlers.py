@@ -1075,11 +1075,13 @@ async def _list(group_id):
 async def _sync(group_id):
     """Adopt open queue jobs that weren't sent through the bot (Bambu Studio Send,
     Virtual Printer, web UI) as completion trackers for THIS group, so they get
-    the same 'started/finished/failed' notifications. Already-tracked items (incl.
-    earlier syncs and the bot's own jobs) and finished ones are skipped, so it's
-    safe to run repeatedly."""
+    the same 'started/finished/failed' notifications. Items THIS group already
+    tracks (incl. earlier syncs and its own jobs) and finished ones are skipped, so
+    it's safe to run repeatedly. Items another group already tracks ARE adopted —
+    so everyone who runs !sync gets notified about a print's start and finish,
+    even if that means more than one person hears about the same print."""
     items = await bambuddy.list_queue()
-    tracked = store.tracked_item_ids()
+    tracked = store.tracked_item_ids(group_id)
     adopted = []
     for it in items or []:
         iid = it.get("id")
