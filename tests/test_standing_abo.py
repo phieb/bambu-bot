@@ -60,11 +60,12 @@ def _items(*specs):
 def test_standing_parsing():
     """"all" and "immer" mean the same thing: everything, future prints included."""
     for msg in ("!abo all", "!abo alle", "!abo immer", "!abo always", "!abo dauer",
-                "!abonnieren permanent"):
+                "!abo on", "!abo an", "!abo ein", "!abonnieren permanent"):
         assert classify.abo_command(msg) == {
             "action": "subscribe", "all": True, "positions": [], "standing": True}, msg
-    # A bare stop stops everything, standing included.
-    for msg in ("!abo stop", "!deabo", "!abo stop all", "!abo stop immer", "!deabo immer"):
+    # A bare stop stops everything, standing included. "off" must have an "on".
+    for msg in ("!abo stop", "!abo off", "!abo aus", "!deabo", "!abo stop all",
+                "!abo stop immer", "!deabo immer"):
         assert classify.abo_command(msg) == {
             "action": "unsubscribe", "all": True, "positions": [], "standing": True}, msg
 

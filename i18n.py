@@ -357,15 +357,17 @@ _M = {
         "de": ("🔔 Abo — Benachrichtigungen für Start & Ende eines Drucks.\n"
                "{standing}"
                "🔔 = abonniert, 🔕 = nicht.\n{lines}\n\n"
-               "• !abo all → alles abonnieren, auch jeden künftigen Druck\n"
+               "• !abo all (oder !abo on) → alles abonnieren, auch jeden künftigen Druck\n"
                "• !abo 2 3 → nur diese Nummern (einmalig)\n"
-               "• !abo stop (oder !deabo) → alles abbestellen, !abo stop 2 → nur Nummer 2"),
+               "• !abo off (oder !abo stop / !deabo) → alles abbestellen, "
+               "!abo stop 2 → nur Nummer 2"),
         "en": ("🔔 Subscriptions — get notified about a print's start & finish.\n"
                "{standing}"
                "🔔 = subscribed, 🔕 = not.\n{lines}\n\n"
-               "• !abo all → subscribe to everything, future prints included\n"
+               "• !abo all (or !abo on) → subscribe to everything, future prints included\n"
                "• !abo 2 3 → only these numbers (one-off)\n"
-               "• !abo stop (or !deabo) → unsubscribe from everything, !abo stop 2 → only number 2"),
+               "• !abo off (or !abo stop / !deabo) → unsubscribe from everything, "
+               "!abo stop 2 → only number 2"),
     },
     "abo_help_empty": {
         "de": ("🔔 Keine offenen Drucke in der Queue.\n"

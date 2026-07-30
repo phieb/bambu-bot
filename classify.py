@@ -33,16 +33,19 @@ _EJECT = re.compile(r"^\s*!\s*(eject|auswurf|auswerfen)(?:\s+(on|an|ein|off|aus|
 # Adopt queue jobs not sent through the bot (Studio Send / VP / web UI) so they
 # also get finished/failed notifications.
 _SYNC = re.compile(r"^\s*!\s*(sync|synchronisieren|scan|übernehmen|uebernehmen)\s*$", re.I)
-# Subscribe this group to start/finish notifications for queue prints — "all" or
-# the position numbers shown by !liste (e.g. "!abo 2 3"). !abo with no argument
-# shows help + which prints you're subscribed to; "!abo stop [..]" / !deabo
-# unsubscribes (all, or the given positions).
+# Subscribe this group to start/finish notifications for queue prints — "all"
+# (everything, future prints included) or the position numbers shown by !liste
+# (e.g. "!abo 2 3", a one-off). !abo with no argument shows help + which prints
+# you're subscribed to; "!abo stop [..]" / "!abo off" / !deabo unsubscribes.
 _ABO = re.compile(r"^\s*!\s*(?:abo|abonnieren|subscribe)(?:\s+(.*?))?\s*$", re.I)
 _DEABO = re.compile(r"^\s*!\s*(?:deabo|de-abo|abbestellen|unsubscribe)(?:\s+(.*?))?\s*$", re.I)
 _ALL_WORDS = ("all", "alle", "alles")
 _STOP_WORDS = ("stop", "stopp", "aus", "off", "ende")
-# Standing subscription: adopt every *future* queue item automatically, instead
-# of the one-shot snapshot "!abo all" takes of what's open right now.
+# "!abo off" already switches everything off via _STOP_WORDS, so "!abo on" has to
+# switch it on — an off without an on reads like a broken command.
+_ON_WORDS = ("on", "an", "ein")
+# Same thing spelled as duration: every *future* queue item, not just what's
+# open right now. All of these are aliases of "!abo all".
 _ALWAYS_WORDS = ("immer", "dauer", "dauerabo", "dauer-abo", "standing",
                  "always", "auto", "permanent")
 
@@ -67,9 +70,10 @@ def abo_command(message):
     Positions refer to the 1-based order shown by !liste. Unknown arguments fall
     back to {'action':'help'} so a typo shows usage instead of doing nothing.
 
-    'all'/'alle'/'immer'/'always' — and a bare '!abo stop' / '!deabo' — carry
-    'standing': True: they cover every print, including future ones. Only the
-    numbered form ('!abo 2 3') is a one-off on specific queue positions."""
+    'all'/'alle'/'on'/'an'/'immer'/'always' — and a bare '!abo stop'/'!abo off'/
+    '!deabo' — carry 'standing': True: they cover every print, including future
+    ones. Only the numbered form ('!abo 2 3') is a one-off on specific queue
+    positions."""
     m = _ABO.match(message or "")
     deabo = False
     if not m:
@@ -84,7 +88,7 @@ def abo_command(message):
         # ones queued tomorrow. A snapshot of exactly the currently-open set was
         # a distinction nobody wanted (and read as a promise it didn't keep).
         # Bare "!abo stop" / "!deabo" likewise stops everything, standing included.
-        if not rest or rest in _ALL_WORDS or rest in _ALWAYS_WORDS:
+        if not rest or rest in _ALL_WORDS or rest in _ALWAYS_WORDS or rest in _ON_WORDS:
             return {"action": action, "all": True, "positions": [], "standing": True}
         pos = _abo_positions(rest)
         if pos is None:
