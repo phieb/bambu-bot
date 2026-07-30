@@ -157,6 +157,31 @@ async def list_plates(library_file_id):
     return await _get(f"/api/v1/library/files/{int(library_file_id)}/plates")
 
 
+async def archive_plates(archive_id):
+    """Plates of an *archive* — what a Bambu-Studio "Send All" upload creates:
+    {archive_id, filename, plates:[{index, name, print_time_seconds, ...}]}.
+
+    A queue item's ``plate_id`` maps 1:1 to ``index`` here. Studio-sent items
+    carry ``archive_id`` and a null ``library_file_id``, so this is the only way
+    to learn what their plates are actually called."""
+    return await _get(f"/api/v1/archives/{int(archive_id)}/plates")
+
+
+async def archive_plate_thumbnail(archive_id, plate_index):
+    """Rendered PNG of one archive plate as raw bytes, or None (best-effort)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                config.BAMBUDDY_URL
+                + f"/api/v1/archives/{int(archive_id)}/plate-thumbnail/{int(plate_index)}"
+            )
+            r.raise_for_status()
+            ct = r.headers.get("content-type", "")
+            return r.content if "image" in ct and r.content else None
+    except Exception:
+        return None
+
+
 async def plate_thumbnail(library_file_id, plate_index):
     """Rendered PNG of a single plate as raw bytes, or None (best-effort)."""
     try:

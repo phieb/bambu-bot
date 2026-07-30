@@ -41,6 +41,10 @@ _ABO = re.compile(r"^\s*!\s*(?:abo|abonnieren|subscribe)(?:\s+(.*?))?\s*$", re.I
 _DEABO = re.compile(r"^\s*!\s*(?:deabo|de-abo|abbestellen|unsubscribe)(?:\s+(.*?))?\s*$", re.I)
 _ALL_WORDS = ("all", "alle", "alles")
 _STOP_WORDS = ("stop", "stopp", "aus", "off", "ende")
+# Standing subscription: adopt every *future* queue item automatically, instead
+# of the one-shot snapshot "!abo all" takes of what's open right now.
+_ALWAYS_WORDS = ("immer", "dauer", "dauerabo", "dauer-abo", "standing",
+                 "always", "auto", "permanent")
 
 
 def _abo_positions(arg):
@@ -61,7 +65,11 @@ def abo_command(message):
     {'action':'subscribe','all':bool,'positions':[int]}, or
     {'action':'unsubscribe','all':bool,'positions':[int]}.
     Positions refer to the 1-based order shown by !liste. Unknown arguments fall
-    back to {'action':'help'} so a typo shows usage instead of doing nothing."""
+    back to {'action':'help'} so a typo shows usage instead of doing nothing.
+
+    '!abo immer' / '!abo stop immer' additionally carry 'standing': True — the
+    standing subscription. Only that branch carries the key, so the existing
+    shapes above stay byte-identical."""
     m = _ABO.match(message or "")
     deabo = False
     if not m:
@@ -72,6 +80,8 @@ def abo_command(message):
     arg = (m.group(1) or "").strip().lower()
 
     def _resolve(rest, action):
+        if rest in _ALWAYS_WORDS:
+            return {"action": action, "all": False, "positions": [], "standing": True}
         if not rest or rest in _ALL_WORDS:
             return {"action": action, "all": True, "positions": []}
         pos = _abo_positions(rest)

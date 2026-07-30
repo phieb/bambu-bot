@@ -414,6 +414,23 @@ async def _thumbnail(lfid, plate_index):
     return await bambuddy.plate_thumbnail(lfid, plate_index) or await bambuddy.file_thumbnail(lfid)
 
 
+async def _job_thumbnail(job):
+    """Preview for a tracker row: the archive plate render for adopted Studio
+    prints, else the library plate/model render. Never raises.
+
+    Adopted jobs live in an *archive*, not the library, so the library lookup
+    can't see them; and ``plate_index`` used to be NULL on every tracker, which
+    made ``plate_thumbnail`` fail silently on int(None) and always degrade to the
+    generic model image."""
+    if job.get("archive_id") and job.get("plate_index"):
+        img = await bambuddy.archive_plate_thumbnail(job["archive_id"], job["plate_index"])
+        if img:
+            return img
+    if job.get("library_file_id"):
+        return await _thumbnail(job["library_file_id"], job.get("plate_index") or 1)
+    return None
+
+
 async def _send_plate_question(group_id, lfid, name, plates):
     text = colors.build_plate_question(name, plates, _lang(group_id))
     srcs = [_plate_source(p, lfid) for p in plates]
@@ -526,8 +543,10 @@ async def _pick_plates(group_id, job, message):
 
 
 def _plate_label(model_name, plate, multi):
+    # Plate first, model second — matches !liste, and swatch titles truncate at
+    # 38 chars, so the *distinguishing* part has to come first to survive.
     if multi:
-        return f'{model_name} — {plate.get("name") or f"Plate {plate.get('index')}"}'
+        return f'{plate.get("name") or f"Plate {plate.get('index')}"} — {model_name}'
     return model_name
 
 
@@ -718,7 +737,8 @@ def _nozzle_eq(a, b):
         return a == b
 
 
-async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None):
+async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=None,
+                         plate_index=None, plate_name=None):
     """Queue one sliced file, but only if it is positively sliced for this printer
     — the universal safety gate. The bot never converts foreign-machine gcode; a
     file that isn't provably P1S (foreign A1/X1/… or unrecognized) is declined with
@@ -767,7 +787,8 @@ async def _queue_guarded(group_id, sender, label, file_id, mapping, plate_id=Non
             return False, i18n.t(lang, "eject_too_tall", h=h, max=config.EJECT_MAX_HEIGHT_MM)
     resp = await bambuddy.queue(file_id, mapping, plate_id=plate_id, gcode_injection=eject_on)
     item_id = resp.get("id") if isinstance(resp, dict) else None
-    store.add_queued(group_id, sender, label, file_id, item_id, eject=eject_on)
+    store.add_queued(group_id, sender, label, file_id, item_id, eject=eject_on,
+                     plate_index=plate_index, plate_name=plate_name)
     return True, ""
 
 
@@ -857,8 +878,12 @@ async def _slice_all(group_id, job, decisions, plates):
             # → tell the printer to print plate N, else it defaults to 1, finds no
             # gcode and rejects the file (HMS 0500-4003). zip/single stay default.
             plate_id = src_plate if within_file_multi else None
+            # src_plate (not plate_id): the re-slice output carries the gcode under
+            # plate_<src_plate>, so that's the right thumbnail index even for the
+            # zip/single case where plate_id stays None.
             queued, gate = await _queue_guarded(
-                group_id, job["sender"], label, file_id, d["mapping"], plate_id)
+                group_id, job["sender"], label, file_id, d["mapping"], plate_id,
+                plate_index=src_plate, plate_name=plate.get("name") or None)
             if queued:
                 queued_n += 1
                 lines.append(i18n.t(lang, "slice_ok_line", label=label, nums=nums, note=note))
@@ -1047,10 +1072,95 @@ async def _cancel(group_id):
         )
 
 
-def _item_name(it):
-    """Best display name for a Bambuddy queue item, falling back to '#<id>'."""
+# Plate names per multi-plate source. A "Send All" from Bambu Studio queues one
+# item per plate, all carrying the *3mf's* name — so !liste showed 8 identical
+# lines. The plate's real name ("half height Box1") lives one API call away, and
+# a queue item's `plate_id` maps 1:1 to the plate `index` there.
+_PLATE_CACHE = {}          # key -> (expires_at, {"count", "names"} | None)
+_PLATE_CACHE_TTL = 300     # a file's plate names never change; only new ids matter
+_PLATE_CACHE_MISS_TTL = 60  # cache failures too, so a dead archive isn't re-fetched every poll
+
+
+def _plate_key(it):
+    """('a'|'l', id) identifying the multi-plate source of a queue item, or None.
+    Studio "Send All" items carry archive_*, bot-queued ones library_file_* —
+    never both."""
+    if it.get("archive_id") is not None:
+        return ("a", it["archive_id"])
+    if it.get("library_file_id") is not None:
+        return ("l", it["library_file_id"])
+    return None
+
+
+async def _fetch_plates(key):
+    """{'count': n, 'names': {index: name}} for one source, or None on failure."""
+    kind, ident = key
+    try:
+        data = (await (bambuddy.archive_plates(ident) if kind == "a"
+                       else bambuddy.list_plates(ident))) or {}
+        plates = data.get("plates") or []
+        return {"count": len(plates),
+                "names": {p.get("index"): (p.get("name") or "").strip() for p in plates}}
+    except Exception:
+        log.warning("plate-name lookup failed for %s %s", kind, ident, exc_info=True)
+        return None
+
+
+async def _plate_names(items):
+    """Resolve plate names for a batch of queue items → {key: {'count','names'}}.
+
+    One HTTP call per *distinct* source id, concurrently: the real queue holds
+    ~65 items sharing a single archive, so naming them one-by-one would mean 65
+    round-trips per !liste."""
+    now = time.monotonic()
+    for k, (exp, _) in list(_PLATE_CACHE.items()):   # prune, keep the cache self-bounding
+        if exp <= now:
+            _PLATE_CACHE.pop(k, None)
+    keys = {k for k in (_plate_key(it) for it in items or []) if k}
+    out, missing = {}, []
+    for k in keys:
+        hit = _PLATE_CACHE.get(k)
+        if hit:
+            if hit[1] is not None:
+                out[k] = hit[1]
+        else:
+            missing.append(k)
+    if missing:
+        results = await asyncio.gather(*(_fetch_plates(k) for k in missing))
+        for k, res in zip(missing, results):
+            _PLATE_CACHE[k] = (now + (_PLATE_CACHE_TTL if res else _PLATE_CACHE_MISS_TTL), res)
+            if res:
+                out[k] = res
+    return out
+
+
+def _model_name(it):
+    """Model-level display name for a queue item, falling back to '#<id>'."""
     return (it.get("library_file_name") or it.get("archive_name")
             or it.get("target_model") or f'#{it.get("id")}')
+
+
+def _item_name(it, plates=None):
+    """'<plate name or Plate N> — <model name>' when the item is one plate of a
+    multi-plate file, else just the model name. ``plates`` is a _plate_names()
+    batch; a missing/failed lookup degrades to the plain model name.
+
+    Single-plate files deliberately get NO prefix — 'Plate 1 — Benchy' would be
+    noise on the common case."""
+    model = _model_name(it)
+    idx = it.get("plate_id")
+    if not idx:
+        return model
+    info = (plates or {}).get(_plate_key(it))
+    if info:
+        if info["count"] <= 1:
+            return model
+        label = info["names"].get(idx) or f"Plate {idx}"
+    elif idx > 1:
+        label = f"Plate {idx}"      # lookup failed, but the index alone proves multi-plate
+    else:
+        return model
+    return f"{label} — {model}"
 
 
 async def _open_queue():
@@ -1067,11 +1177,12 @@ async def _list(group_id):
         await signal_client.send_to_group(group_id, i18n.t(lang, "list_empty"))
         return
     ejects = store.eject_by_item()  # {queue_item_id: bool} for bot-tracked jobs
+    plates = await _plate_names(open_items)
     eject_tag = i18n.t(lang, "list_eject_tag")
     noeject_tag = i18n.t(lang, "list_noeject_tag")
     lines = []
     for i, it in enumerate(open_items, 1):
-        nm = _item_name(it)
+        nm = _item_name(it, plates)
         st = it.get("status") or "?"
         # eject tag: 🧹 = with auto-eject, ✋ = without; nothing for jobs the bot
         # didn't queue (e.g. a Bambu Studio print — we don't know).
@@ -1096,13 +1207,14 @@ async def _sync(group_id):
     (each tracker notifies its own group_id in _check_completions)."""
     items = await bambuddy.list_queue()
     tracked = store.tracked_item_ids(group_id)
+    plates = await _plate_names(items)
     adopted = []
     for it in items or []:
         iid = it.get("id")
         status = (it.get("status") or "").lower()
         if iid is None or iid in tracked or status in _DONE_QUEUE_STATUS:
             continue
-        adopted.append(_adopt_item(group_id, it))
+        adopted.append(_adopt_item(group_id, it, plates))
     lang = _lang(group_id)
     if not adopted:
         await signal_client.send_to_group(group_id, i18n.t(lang, "sync_in_sync"))
@@ -1112,13 +1224,52 @@ async def _sync(group_id):
         group_id, i18n.t(lang, "sync_adopted", n=len(adopted), lines=lines))
 
 
-def _adopt_item(group_id, it):
+async def _adopt_standing():
+    """Give every group with a standing subscription a tracker for each open queue
+    item it doesn't already track, whatever the print's source.
+
+    Silent on purpose: the start message follows within a poll anyway, and a
+    "3 neue Drucke abonniert" every 60 s would be noise."""
+    groups = store.standing_abo_groups()
+    if not groups:
+        # Load-bearing, not an optimisation: without it every _check_completions
+        # would hit the queue endpoint, including in tests that only stub
+        # get_queue_item/printer_status.
+        return
+    try:
+        items = await bambuddy.list_queue()
+    except Exception:
+        log.warning("standing-abo: queue fetch failed", exc_info=True)
+        return
+    open_items = [it for it in (items or [])
+                  if it.get("id") is not None
+                  and (it.get("status") or "").lower() not in _DONE_QUEUE_STATUS]
+    if not open_items:
+        return
+    plates = await _plate_names(open_items)
+    for gid in groups:
+        tracked = store.tracked_item_ids(gid)
+        for it in open_items:
+            if it["id"] not in tracked:
+                _adopt_item(gid, it, plates)
+
+
+def _adopt_item(group_id, it, plates=None):
     """Create a completion tracker for ``it`` under ``group_id`` and return its
     display name. Caller is responsible for skipping already-tracked/finished
     items. A mid-print item is tracked at 'printing' so it only fires the finished
     message, not a misleading 'starts now'."""
-    name = _item_name(it)
-    jid = store.add_queued(group_id, "", name, None, it.get("id"), eject=False)
+    name = _item_name(it, plates)
+    idx = it.get("plate_id")
+    info = (plates or {}).get(_plate_key(it)) or {}
+    jid = store.add_queued(
+        group_id, "", name,
+        it.get("library_file_id"),      # was hardcoded None, so thumbnails never resolved
+        it.get("id"), eject=False,
+        plate_index=idx,
+        plate_name=(info.get("names") or {}).get(idx),
+        archive_id=it.get("archive_id"),
+    )
     if (it.get("status") or "").lower() == "printing":
         store.set_stage(jid, "printing")
     return name
@@ -1132,6 +1283,23 @@ async def _abo(group_id, cmd):
     lang = _lang(group_id)
     action = cmd["action"]
 
+    # Standing subscription first: setting the flag must work even when Bambuddy
+    # is unreachable, so it goes before any queue fetch.
+    if cmd.get("standing"):
+        on = action == "subscribe"
+        store.set_standing_abo(group_id, on)
+        if not on:
+            await signal_client.send_to_group(group_id, i18n.t(lang, "abo_standing_off"))
+            return
+        items = await _open_queue()
+        plates = await _plate_names(items)
+        tracked = store.tracked_item_ids(group_id)
+        n = sum(1 for it in items
+                if it.get("id") is not None and it.get("id") not in tracked
+                and _adopt_item(group_id, it, plates))
+        await signal_client.send_to_group(group_id, i18n.t(lang, "abo_standing_on", n=n))
+        return
+
     # Mute everything without touching the live queue (so prints that already
     # aged out of Bambuddy can still be unsubscribed).
     if action == "unsubscribe" and cmd["all"]:
@@ -1142,15 +1310,20 @@ async def _abo(group_id, cmd):
 
     open_items = await _open_queue()
     tracked = store.tracked_item_ids(group_id)
+    plates = await _plate_names(open_items)
 
     if action == "help":
+        standing = i18n.t(lang, "abo_standing_state_on" if store.get_standing_abo(group_id)
+                          else "abo_standing_state_off")
         if not open_items:
-            await signal_client.send_to_group(group_id, i18n.t(lang, "abo_help_empty"))
+            await signal_client.send_to_group(
+                group_id, i18n.t(lang, "abo_help_empty", standing=standing))
             return
         lines = "\n".join(
-            f'{i}. {"🔔" if it.get("id") in tracked else "🔕"} {_item_name(it)}'
+            f'{i}. {"🔔" if it.get("id") in tracked else "🔕"} {_item_name(it, plates)}'
             for i, it in enumerate(open_items, 1))
-        await signal_client.send_to_group(group_id, i18n.t(lang, "abo_help", lines=lines))
+        await signal_client.send_to_group(
+            group_id, i18n.t(lang, "abo_help", lines=lines, standing=standing))
         return
 
     # Resolve the targeted items: all open ones, or the given !liste positions.
@@ -1171,14 +1344,22 @@ async def _abo(group_id, cmd):
                 return
 
     if action == "subscribe":
-        adopted = [_adopt_item(group_id, it) for it in targets
+        # Un-mute anything this group stopped earlier — re-subscribing has to work,
+        # and a muted tracker still counts as "tracked" (that's what keeps the
+        # standing-abo pass from re-adopting it).
+        ids = [it.get("id") for it in targets if it.get("id") is not None]
+        revived = store.revive_trackers(group_id, ids)
+        tracked = store.tracked_item_ids(group_id)
+        adopted = [_adopt_item(group_id, it, plates) for it in targets
                    if it.get("id") is not None and it.get("id") not in tracked]
-        if not adopted:
+        if not adopted and not revived:
             await signal_client.send_to_group(group_id, i18n.t(lang, "abo_already"))
             return
-        lines = "\n".join(f"  • {n}" for n in adopted)
+        names = adopted or [_item_name(it, plates) for it in targets
+                            if it.get("id") in set(ids)]
+        lines = "\n".join(f"  • {n}" for n in names)
         await signal_client.send_to_group(
-            group_id, i18n.t(lang, "abo_subscribed", n=len(adopted), lines=lines))
+            group_id, i18n.t(lang, "abo_subscribed", n=len(adopted) + revived, lines=lines))
     else:  # unsubscribe specific positions
         ids = [it.get("id") for it in targets if it.get("id") is not None]
         removed = store.untrack_items(group_id, ids)
@@ -1186,7 +1367,13 @@ async def _abo(group_id, cmd):
         await signal_client.send_to_group(group_id, i18n.t(lang, key, n=removed))
 
 
-_ACTIVE_STATES = {"RUNNING", "PRINTING", "PREPARE", "PAUSE", "PAUSED", "SLICING"}
+# The machine is genuinely making progress on a job.
+_RUNNING_STATES = {"RUNNING", "PRINTING", "PREPARE", "SLICING"}
+# A job is loaded but stopped, waiting for a human (filament runout, HMS, M600).
+_PAUSED_STATES = {"PAUSE", "PAUSED"}
+# A print is loaded at all. Fine for "is there something to report?", but NOT a
+# substitute for "it actually started" — a paused print used to read as healthy.
+_ACTIVE_STATES = _RUNNING_STATES | _PAUSED_STATES
 
 
 async def _progress(group_id):
@@ -1206,23 +1393,36 @@ async def _progress(group_id):
     ln, tl = s.get("layer_num"), s.get("total_layers")
     rem = s.get("remaining_time")
     active = state.upper() in _ACTIVE_STATES or (isinstance(prog, (int, float)) and 0 < prog < 100)
+    paused = state.upper() in _PAUSED_STATES
+    hms = _hms_detail(s, lang)
     if not (name and active):
-        await signal_client.send_to_group(
-            group_id, i18n.t(lang, "progress_idle", state=state.lower()), attachments=attachments
-        )
+        text = i18n.t(lang, "progress_idle", state=state.lower())
+        # Nothing printing *and* the plate isn't confirmed clear → say why the
+        # queue is stalled, so checking in an hour actually explains itself.
+        if s.get("awaiting_plate_clear"):
+            text += "\n" + i18n.t(lang, "progress_awaiting_clear")
+        if hms:
+            text += "\n" + i18n.t(lang, "progress_hms", detail=hms)
+        await signal_client.send_to_group(group_id, text, attachments=attachments)
         return
-    parts = [f'🖨️ „{name}" — {state}']
+    parts = [f'{"⏸️" if paused else "🖨️"} „{name}" — {state}']
     if isinstance(prog, (int, float)):
         parts.append(f"{round(prog)}%")
     if ln and tl:
         parts.append(f"Layer {ln}/{tl}")
-    if rem and rem > 0:
+    # While paused, remaining_time is frozen — printing an ETA off it would be a
+    # lie, so report the pause instead.
+    if paused:
+        parts.append(i18n.t(lang, "progress_paused"))
+    elif rem and rem > 0:
         r = int(rem)
         h, m = divmod(r, 60)
         dur = f"{h}:{m:02d} h" if h else f"{m} min"
         clock = (datetime.datetime.now() + datetime.timedelta(minutes=r)).strftime("%H:%M")
         parts.append(i18n.t(lang, "progress_remaining", dur=dur))
         parts.append(i18n.t(lang, "progress_done_at", clock=clock))
+    if hms:
+        parts.append(i18n.t(lang, "progress_hms", detail=hms))
     await signal_client.send_to_group(group_id, " · ".join(parts), attachments=attachments)
 
 
@@ -1250,6 +1450,83 @@ async def poll_completions(interval=60):
         await asyncio.sleep(interval)
 
 
+# ----- intervention alerts: the printer is stopped and needs a human -----
+
+def _hms_entry(e):
+    """(code, description) from one hms_errors entry. Bambuddy returns a list, but
+    the element shape isn't contractually pinned — accept dicts or bare strings,
+    and never raise: an exception in the poller kills that whole cycle for *every*
+    tracker, not just this one."""
+    if isinstance(e, dict):
+        code = (e.get("code") or e.get("hms_code") or e.get("attr") or "")
+        desc = (e.get("description") or e.get("desc") or e.get("message") or "")
+        return str(code).strip(), str(desc).strip()
+    return str(e).strip(), ""
+
+
+def _hms_codes(pstatus):
+    """Sorted HMS error codes as strings, or [] when the printer is healthy."""
+    try:
+        entries = (pstatus or {}).get("hms_errors") or []
+        codes = [c for c, _ in (_hms_entry(e) for e in entries) if c]
+        return sorted(set(codes))
+    except Exception:
+        log.warning("could not read hms_errors", exc_info=True)
+        return []
+
+
+def _hms_detail(pstatus, lang="de"):
+    """': 0500-4003 Filament ausgegangen' — code + text, max 3, or '' if healthy."""
+    try:
+        entries = (pstatus or {}).get("hms_errors") or []
+    except Exception:
+        return ""
+    bits = []
+    for e in entries[:3]:
+        code, desc = _hms_entry(e)
+        bits.append(f"{code} {desc}".strip() or i18n.t(lang, "hms_unknown"))
+    return (": " + "; ".join(bits)) if bits else ""
+
+
+def _condition(pstatus):
+    """The printer's current 'needs a human' condition key, or None.
+
+    HMS wins over pause: a pause *caused* by an error should read as the error."""
+    codes = _hms_codes(pstatus)
+    if codes:
+        return "hms:" + ",".join(codes)
+    if (pstatus or {}).get("hms_errors"):
+        return "hms:unknown"          # errors present but unparseable — still alert
+    if ((pstatus or {}).get("state") or "").upper() in _PAUSED_STATES:
+        return "pause"
+    return None
+
+
+# The condition seen on the previous poll. A filament change (M600) or AMS
+# retract shows PAUSE for a moment; requiring two consecutive polls stops the
+# bot crying wolf. In-memory on purpose — a restart costs one poll of delay,
+# while the persistent `alerts` column is what guarantees "only once".
+_LAST_CONDITION = None
+
+
+async def _intervention(job, pstatus, lang):
+    """Tell this tracker's group that the printer stopped and needs them — once
+    per condition — and once more when it recovers."""
+    cond = _condition(pstatus)
+    if cond != _LAST_CONDITION:
+        return                                  # debounce: must hold two polls
+    if cond:
+        if store.mark_alert(job["id"], cond):
+            key = "intervention_paused" if cond == "pause" else "intervention_hms"
+            await signal_client.send_to_group(
+                job["group_id"],
+                i18n.t(lang, key, name=job["model_name"], detail=_hms_detail(pstatus, lang)))
+    elif store.get_alerts(job["id"]):
+        store.clear_alerts(job["id"])
+        await signal_client.send_to_group(
+            job["group_id"], i18n.t(lang, "intervention_resolved", name=job["model_name"]))
+
+
 def _eta_phrase(remaining_min, lang="de"):
     """' Fertig ca. 15:26 Uhr (in ~2 h 15 min).' from the printer's remaining
     minutes, or '' if it isn't known yet. Clock time is the container's local
@@ -1264,6 +1541,10 @@ def _eta_phrase(remaining_min, lang="de"):
 
 
 async def _check_completions():
+    global _LAST_CONDITION
+    # Adopt first, so a freshly picked-up print can still announce its start in
+    # this same pass.
+    await _adopt_standing()
     # Bambuddy flips a queue item to 'printing' the moment it *dispatches* it —
     # optimistically, before the machine confirms. If the printer can't actually
     # start (e.g. an HMS error), the item still reads 'printing'. So we only
@@ -1273,7 +1554,9 @@ async def _check_completions():
     except Exception:
         log.warning("printer status fetch failed in completion poll", exc_info=True)
         pstatus = None
-    printer_active = bool(pstatus) and (pstatus.get("state") or "").upper() in _ACTIVE_STATES
+    # _RUNNING_STATES, not _ACTIVE_STATES: a job paused on an HMS error at
+    # dispatch must not be announced as "druckt jetzt los".
+    printer_running = bool(pstatus) and (pstatus.get("state") or "").upper() in _RUNNING_STATES
     for job in store.queued_jobs_with_item():
         item = await bambuddy.get_queue_item(job["queue_item_id"])
         if item is None:
@@ -1285,9 +1568,9 @@ async def _check_completions():
         if status == "printing" and job["stage"] != "printing":
             # pending → printing, but only believe it once the machine is really
             # running — otherwise re-check next poll (no premature/false start).
-            if not printer_active:
+            if not printer_running:
                 continue
-            thumb = await _thumbnail(job.get("library_file_id"), job.get("plate_index"))
+            thumb = await _job_thumbnail(job)
             # Right after dispatch the P1S usually still reports remaining_time
             # 0/None (heating/preparing), which would drop the ETA entirely. Fall
             # back to the item's sliced print time so every start gets an estimate.
@@ -1320,4 +1603,10 @@ async def _check_completions():
             store.set_stage(job["id"], "failed")
         elif status == "cancelled":
             store.set_stage(job["id"], "cancelled")
-        # pending / printing / missing → keep watching
+        elif status == "printing":
+            # Already announced as started → this is the print the printer is on,
+            # so its subscribers are exactly who should hear that it needs a hand.
+            await _intervention(job, pstatus, lang)
+        # pending / missing → keep watching
+    # Arm the debounce for the next poll (see _LAST_CONDITION).
+    _LAST_CONDITION = _condition(pstatus)

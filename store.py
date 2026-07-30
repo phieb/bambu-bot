@@ -64,6 +64,17 @@ def init_db():
                 value TEXT
             )"""
         )
+        # Per-group preferences. Deliberately NOT a column on `groups`: that table
+        # is keyed by sender and save_group() is an INSERT OR REPLACE listing only
+        # four columns, so anything added there is silently wiped whenever someone
+        # re-registers. And `settings` above is a global KV store by contract.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS group_settings (
+                group_id TEXT PRIMARY KEY,
+                standing_abo INTEGER NOT NULL DEFAULT 0,
+                standing_since REAL
+            )"""
+        )
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_group_stage ON jobs(group_id, stage)")
         cols = [r[1] for r in c.execute("PRAGMA table_info(jobs)").fetchall()]
         for name, decl in (
@@ -76,6 +87,8 @@ def init_db():
             ("plate_name", "TEXT"),
             ("decisions", "TEXT"),
             ("eject", "INTEGER"),
+            ("archive_id", "INTEGER"),
+            ("alerts", "TEXT"),
         ):
             if name not in cols:
                 c.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
@@ -149,6 +162,37 @@ def set_lang(group_id, lang):
         c.execute("UPDATE groups SET lang=? WHERE group_id=?", (lang, group_id))
 
 
+# ----- per-group preferences -----
+
+def set_standing_abo(group_id, enabled):
+    """Turn a group's standing subscription ('Dauer-Abo') on/off — with it on the
+    group gets a tracker for every future queue item automatically, whatever the
+    print's source."""
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO group_settings (group_id, standing_abo, standing_since)
+               VALUES (?,?,?)
+               ON CONFLICT(group_id) DO UPDATE SET standing_abo=excluded.standing_abo,
+                                                   standing_since=excluded.standing_since""",
+            (group_id, 1 if enabled else 0, time.time() if enabled else None),
+        )
+
+
+def get_standing_abo(group_id):
+    with _conn() as c:
+        row = c.execute("SELECT standing_abo FROM group_settings WHERE group_id=?",
+                        (group_id,)).fetchone()
+    return bool(row and row["standing_abo"])
+
+
+def standing_abo_groups():
+    """group_ids with a standing subscription — the auto-adopt pass's work list."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT group_id FROM group_settings WHERE standing_abo=1").fetchall()
+    return [r["group_id"] for r in rows]
+
+
 # ----- dialog (the single open job per group) -----
 
 def active_job(group_id):
@@ -218,17 +262,25 @@ def delete_job(job_id):
 
 # ----- queued trackers (one per plate) -----
 
-def add_queued(group_id, sender, model_name, library_file_id, queue_item_id, eject=False):
+def add_queued(group_id, sender, model_name, library_file_id, queue_item_id, eject=False,
+               plate_index=None, plate_name=None, archive_id=None):
     """Record a queued plate so it can be watched for completion / cancelled.
-    ``eject`` = a Farmloop eject was injected into this job's gcode."""
+    ``eject`` = a Farmloop eject was injected into this job's gcode.
+
+    ``plate_index``/``plate_name``/``archive_id`` identify *which* plate of a
+    multi-plate file this tracker is. They used to be left NULL, which meant the
+    completion poller could never render the per-plate thumbnail (it always fell
+    back to the generic model image) and a tracker stopped being self-describing
+    once its queue item aged out of Bambuddy."""
     now = time.time()
     with _conn() as c:
         cur = c.execute(
             """INSERT INTO jobs (group_id, sender, model_name, library_file_id,
-                                 queue_item_id, eject, stage, created_at, updated_at)
-               VALUES (?,?,?,?,?,?, 'queued', ?, ?)""",
+                                 queue_item_id, eject, plate_index, plate_name,
+                                 archive_id, stage, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?, 'queued', ?, ?)""",
             (group_id, sender, model_name, library_file_id, queue_item_id,
-             1 if eject else 0, now, now),
+             1 if eject else 0, plate_index, plate_name, archive_id, now, now),
         )
         return cur.lastrowid
 
@@ -275,6 +327,45 @@ def set_stage(job_id, stage):
         c.execute("UPDATE jobs SET stage=?, updated_at=? WHERE id=?", (stage, time.time(), job_id))
 
 
+# ----- intervention alerts (printer needs a human) -----
+
+def get_alerts(job_id):
+    """Condition keys already announced for this tracker (e.g. {'pause'})."""
+    with _conn() as c:
+        row = c.execute("SELECT alerts FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if not row or not row["alerts"]:
+        return set()
+    try:
+        return set(json.loads(row["alerts"]))
+    except (ValueError, TypeError):
+        return set()
+
+
+def mark_alert(job_id, key):
+    """Record that alert ``key`` was announced for this tracker. Returns True the
+    first time (→ send it) and False afterwards (→ stay quiet).
+
+    This is the 'once per condition per job' gate. It lives in sqlite rather than
+    memory so an unresolved pause can't re-announce itself every 60 s poll, or
+    again after a restart."""
+    have = get_alerts(job_id)
+    if key in have:
+        return False
+    have.add(key)
+    with _conn() as c:
+        c.execute("UPDATE jobs SET alerts=?, updated_at=? WHERE id=?",
+                  (json.dumps(sorted(have)), time.time(), job_id))
+    return True
+
+
+def clear_alerts(job_id):
+    """Forget a tracker's announced alerts once the printer recovers, so a later,
+    genuinely new occurrence of the same condition alerts again."""
+    with _conn() as c:
+        c.execute("UPDATE jobs SET alerts=NULL, updated_at=? WHERE id=?",
+                  (time.time(), job_id))
+
+
 def tracked_item_ids(group_id=None):
     """Bambuddy queue_item_ids the bot already has a tracker for (any stage), so a
     command doesn't double-adopt a job it already watches. Global across all groups
@@ -292,29 +383,52 @@ def tracked_item_ids(group_id=None):
 
 
 def untrack_items(group_id, item_ids):
-    """Drop a group's active trackers for the given Bambuddy queue_item_ids (used
+    """Mute a group's active trackers for the given Bambuddy queue_item_ids (used
     by !abo stop <n>). Only mutes notifications for this group — the print itself
-    is untouched. Returns how many trackers were removed."""
+    is untouched. Returns how many trackers were muted.
+
+    Muted rather than deleted: with a standing subscription on, a deleted tracker
+    is simply re-adopted on the next poll, silently undoing the user's !abo stop.
+    'cancelled' is terminal (so it stops notifying) but still counts as tracked,
+    which is exactly what makes the auto-adopt pass skip it."""
     if not item_ids:
         return 0
     qs = ",".join("?" * len(item_ids))
     with _conn() as c:
         cur = c.execute(
-            f"DELETE FROM jobs WHERE group_id=? AND stage IN ('queued','printing') "
+            f"UPDATE jobs SET stage='cancelled', updated_at=? "
+            f"WHERE group_id=? AND stage IN ('queued','printing') "
             f"AND queue_item_id IN ({qs})",
-            (group_id, *item_ids),
+            (time.time(), group_id, *item_ids),
         )
         return cur.rowcount
 
 
 def untrack_all(group_id):
-    """Drop all of a group's active trackers (used by !abo stop / !deabo) so it
+    """Mute all of a group's active trackers (used by !abo stop / !deabo) so it
     stops getting start/finish notifications. The prints themselves keep running.
-    Returns how many trackers were removed."""
+    Returns how many trackers were muted. See untrack_items on why muted, not
+    deleted."""
     with _conn() as c:
         cur = c.execute(
-            "DELETE FROM jobs WHERE group_id=? AND stage IN ('queued','printing')",
-            (group_id,),
+            "UPDATE jobs SET stage='cancelled', updated_at=? "
+            "WHERE group_id=? AND stage IN ('queued','printing')",
+            (time.time(), group_id),
+        )
+        return cur.rowcount
+
+
+def revive_trackers(group_id, item_ids):
+    """Un-mute trackers a group earlier stopped, so it can re-subscribe to a print
+    it silenced. Returns how many were revived."""
+    if not item_ids:
+        return 0
+    qs = ",".join("?" * len(item_ids))
+    with _conn() as c:
+        cur = c.execute(
+            f"UPDATE jobs SET stage='queued', updated_at=? "
+            f"WHERE group_id=? AND stage='cancelled' AND queue_item_id IN ({qs})",
+            (time.time(), group_id, *item_ids),
         )
         return cur.rowcount
 

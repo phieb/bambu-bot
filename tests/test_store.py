@@ -78,3 +78,26 @@ def test_discard_only_drops_open_dialog(tmp_path):
     assert store.last_queued_job("group.x")["id"] == queued  # tracker untouched
     store.discard_dialog(queued)                         # refuses terminal rows
     assert store.last_queued_job("group.x")["id"] == queued
+
+
+def test_add_queued_persists_plate_identity(tmp_path):
+    """Regression: plate_index/plate_name were never written, so the completion
+    poller could never render a per-plate thumbnail."""
+    config.DB_PATH = str(tmp_path / "t.db")
+    store.init_db()
+    jid = store.add_queued("group.x", "+1", "C — Sticks", 4, 9,
+                           plate_index=3, plate_name="C", archive_id=108)
+    job = store.queued_jobs_with_item()[0]
+    assert job["id"] == jid
+    assert (job["plate_index"], job["plate_name"], job["archive_id"]) == (3, "C", 108)
+
+
+def test_add_queued_defaults_stay_null(tmp_path):
+    """Old-style positional calls must keep working (many existing call sites)."""
+    config.DB_PATH = str(tmp_path / "t.db")
+    store.init_db()
+    store.add_queued("group.x", "+1", "Plain", 4, 9)
+    job = store.queued_jobs_with_item()[0]
+    assert job["plate_index"] is None
+    assert job["plate_name"] is None
+    assert job["archive_id"] is None

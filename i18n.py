@@ -355,23 +355,51 @@ _M = {
     # ----- !abo -----
     "abo_help": {
         "de": ("🔔 Abo — Benachrichtigungen für Start & Ende eines Drucks.\n"
+               "{standing}"
                "🔔 = abonniert, 🔕 = nicht.\n{lines}\n\n"
-               "• !abo all → alle abonnieren\n"
+               "• !abo immer → Dauer-Abo: jeder neue Druck automatisch\n"
+               "• !abo all → alle offenen abonnieren\n"
                "• !abo 2 3 → nur diese Nummern\n"
                "• !abo stop (oder !deabo) → alle abbestellen, !abo stop 2 → nur Nummer 2"),
         "en": ("🔔 Subscriptions — get notified about a print's start & finish.\n"
+               "{standing}"
                "🔔 = subscribed, 🔕 = not.\n{lines}\n\n"
-               "• !abo all → subscribe to all\n"
+               "• !abo immer → standing subscription: every new print automatically\n"
+               "• !abo all → subscribe to all open ones\n"
                "• !abo 2 3 → only these numbers\n"
                "• !abo stop (or !deabo) → unsubscribe all, !abo stop 2 → only number 2"),
     },
     "abo_help_empty": {
         "de": ("🔔 Keine offenen Drucke in der Queue.\n"
-               "Sobald welche da sind: !abo all abonniert alle, "
-               "!abo 2 3 nur bestimmte Nummern aus !liste."),
+               "{standing}"
+               "Sobald welche da sind: !abo immer abonniert automatisch jeden neuen, "
+               "!abo all alle offenen, !abo 2 3 nur bestimmte Nummern aus !liste."),
         "en": ("🔔 No open prints in the queue.\n"
-               "Once there are some: !abo all subscribes to all, "
-               "!abo 2 3 only specific numbers from !list."),
+               "{standing}"
+               "Once there are some: !abo immer subscribes to every new one automatically, "
+               "!abo all to all open ones, !abo 2 3 only specific numbers from !list."),
+    },
+    "abo_standing_on": {
+        "de": ("🔔 Dauer-Abo an — ab jetzt meld ich dir **jeden** neuen Druck automatisch, "
+               "egal woher er kommt. ({n} offene(r) Druck(e) gleich mit abonniert.)\n"
+               "Wieder aus: !abo stop immer"),
+        "en": ("🔔 Standing subscription on — from now on I'll notify you about **every** "
+               "new print, whatever its source. (Subscribed to {n} open print(s) right away.)\n"
+               "Turn off: !abo stop immer"),
+    },
+    "abo_standing_off": {
+        "de": ("🔕 Dauer-Abo aus — neue Drucke abonnier ich nicht mehr automatisch. "
+               "Die schon laufenden Abos bleiben (mit !abo stop beendest du die)."),
+        "en": ("🔕 Standing subscription off — new prints are no longer subscribed "
+               "automatically. Existing subscriptions stay (use !abo stop to end those)."),
+    },
+    "abo_standing_state_on": {
+        "de": "♾️ Dauer-Abo: **an** — jeder neue Druck wird automatisch abonniert.\n",
+        "en": "♾️ Standing subscription: **on** — every new print is subscribed automatically.\n",
+    },
+    "abo_standing_state_off": {
+        "de": "♾️ Dauer-Abo: aus — !abo immer schaltet es an.\n",
+        "en": "♾️ Standing subscription: off — !abo immer turns it on.\n",
     },
     "abo_subscribed": {
         "de": "🔔 {n} Druck(e) abonniert — ich melde Start & Ende:\n{lines}",
@@ -406,6 +434,38 @@ _M = {
     "progress_done_at": {
         "de": "fertig ~{clock} Uhr",
         "en": "done ~{clock}",
+    },
+    "progress_paused": {
+        "de": "⏸️ pausiert — wartet auf dich",
+        "en": "⏸️ paused — waiting for you",
+    },
+    "progress_hms": {
+        "de": "⚠️ Fehler{detail}",
+        "en": "⚠️ error{detail}",
+    },
+    "progress_awaiting_clear": {
+        "de": "🧹 Die Platte ist noch voll — schick !go, wenn sie frei ist.",
+        "en": "🧹 The plate is still full — send !go once it's clear.",
+    },
+
+    # ----- Eingriff nötig (Drucker steht) -----
+    "intervention_paused": {
+        "de": "⏸️ „{name}\" ist pausiert — der Drucker wartet auf dich.",
+        "en": "⏸️ „{name}\" is paused — the printer is waiting for you.",
+    },
+    "intervention_hms": {
+        "de": "⚠️ „{name}\": der Drucker meldet einen Fehler{detail}\n"
+              "Bitte schau nach — der Druck steht.",
+        "en": "⚠️ „{name}\": the printer reports an error{detail}\n"
+              "Please take a look — the print is stopped.",
+    },
+    "intervention_resolved": {
+        "de": "▶️ „{name}\" läuft wieder.",
+        "en": "▶️ „{name}\" is running again.",
+    },
+    "hms_unknown": {
+        "de": "unbekannter Fehler",
+        "en": "unknown error",
     },
 
     # ----- !go -----
