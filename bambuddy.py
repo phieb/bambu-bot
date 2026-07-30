@@ -1,7 +1,11 @@
 """Async client for the Bambuddy REST API."""
+import logging
+
 import httpx
 
 import config
+
+log = logging.getLogger("bambu-bot")
 
 
 async def _post(path, body):
@@ -61,18 +65,32 @@ async def mounted_nozzle(printer_id):
     return None
 
 
-async def camera_snapshot(printer_id):
+async def camera_snapshot(printer_id, attempts=2):
     """Single live JPEG frame from the printer camera as raw bytes, or None.
     Works without starting a stream; never raises (a missing cam shouldn't
-    break a progress reply)."""
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(config.BAMBUDDY_URL + f"/api/v1/printers/{printer_id}/camera/snapshot")
-            r.raise_for_status()
-            ct = r.headers.get("content-type", "")
-            return r.content if "image" in ct and r.content else None
-    except Exception:
-        return None
+    break a progress reply).
+
+    A snapshot normally takes ~2s but occasionally stalls or comes back
+    non-image (camera busy / printer just woke up), which silently costs the
+    photo on a !progress reply. So retry once and — crucially — LOG why it
+    failed: a returned None used to be indistinguishable from "no camera",
+    which made a missing photo undiagnosable after the fact."""
+    url = config.BAMBUDDY_URL + f"/api/v1/printers/{printer_id}/camera/snapshot"
+    for attempt in range(1, attempts + 1):
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(url)
+                r.raise_for_status()
+                ct = r.headers.get("content-type", "")
+                if "image" in ct and r.content:
+                    return r.content
+                log.warning("camera snapshot not an image (attempt %d/%d): "
+                            "status=%s content-type=%r bytes=%d",
+                            attempt, attempts, r.status_code, ct, len(r.content or b""))
+        except Exception as e:
+            log.warning("camera snapshot failed (attempt %d/%d): %s: %s",
+                        attempt, attempts, type(e).__name__, e)
+    return None
 
 
 async def queue(library_file_id, ams_mapping, plate_id=None, gcode_injection=True):
