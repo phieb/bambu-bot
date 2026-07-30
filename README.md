@@ -110,8 +110,10 @@ first". Every stage transition is idempotent (atomic claim).
 | Command | Does |
 |---|---|
 | `!progress` / `!status` | Live print state (%, layer, ETA) **+ a camera snapshot** |
-| `!liste` / `!queue` | The current Bambuddy queue with status emoji |
-| `!sync` | Adopt open queue jobs **not** sent through the bot (Bambu Studio Send, Virtual Printer, web UI) as completion trackers for this group, so they also get finished/failed notifications. Idempotent — already-tracked and finished jobs are skipped. |
+| `!liste` / `!queue` | The current Bambuddy queue with status emoji. A "Send All" queues one item per plate, all named after the *3mf* — so each line is labelled `<plate name> — <model>`, resolved from the archive's plate list. |
+| `!abo all` / `!abo on` | Subscribe this group to **every** print's start & finish — including future ones, whatever their source (bot, Bambu Studio Send, Virtual Printer, someone else). Set it once. `!abo off` / `!abo stop` ends it. |
+| `!abo 2 3` | One-off: subscribe to just those `!liste` positions. `!abo stop 2` removes one again. `!abo` alone shows what you're subscribed to (🔔/🔕). |
+| `!sync` | Adopt open queue jobs **not** sent through the bot as completion trackers for this group. Mostly superseded by `!abo all`, which also covers future prints. Idempotent per group — several people can each `!sync`/`!abo` the same print and each get their own notifications. |
 | `!go` / `!los` / `!frei` | Confirm the plate is clear → release the next queued print (`POST /printers/{id}/clear-plate`) |
 | `!eject on` / `off` / _(no arg)_ | Toggle Farmloop auto-eject (status with no arg). See **Auto-eject** below. |
 | `!platte <name>` / _(no arg)_ | Set the build plate physically on the printer (`cool` / `textured` / `smooth` / `engineering` / `hot` / `supertack`), baked into every re-slice as the slicer's `curr_bed_type`. No arg shows the current plate. The P1S can't report its mounted plate, so set this on a swap. |
@@ -128,10 +130,16 @@ first". Every stage transition is idempotent (atomic claim).
 
 In a **registered group the bot claims every message** (so nothing leaks to other
 tools); unrecognized text gets a friendly "here's what I can do" reply. When a
-queued job **starts printing** the group gets a notification with the model's
-plate thumbnail attached. When it **finishes or fails**, another message follows.
-Jobs started through other channels (Bambu Studio, web UI) aren't tracked by
-default — use `!sync` to adopt them as trackers for the current group.
+queued job **starts printing** the group gets a notification with that plate's
+thumbnail attached. When it **finishes or fails**, another message follows. Jobs
+started through other channels (Bambu Studio, web UI) aren't tracked by default —
+`!abo all` picks up everything from then on, including future prints.
+
+If the printer **stops and needs a human** — paused, or reporting an HMS error —
+whoever is subscribed to the running print is told, once per incident, plus one
+message when it recovers. There are deliberately no repeat reminders. Note that a
+*low filament* warning is not possible: every AMS tray reports `remain: -1` for
+third-party spools, so detection is reactive only.
 
 ## Localization
 
