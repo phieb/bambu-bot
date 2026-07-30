@@ -1089,11 +1089,13 @@ async def _list(group_id):
 async def _sync(group_id):
     """Adopt open queue jobs that weren't sent through the bot (Bambu Studio Send,
     Virtual Printer, web UI) as completion trackers for THIS group, so they get
-    the same 'started/finished/failed' notifications. Already-tracked items (incl.
-    earlier syncs and the bot's own jobs) and finished ones are skipped, so it's
-    safe to run repeatedly."""
+    the same 'started/finished/failed' notifications. Items THIS group already
+    tracks (incl. earlier syncs and its own jobs) and finished ones are skipped, so
+    it's safe to run repeatedly. Items another group already tracks ARE adopted —
+    every person can !sync the same print and each gets their own notifications
+    (each tracker notifies its own group_id in _check_completions)."""
     items = await bambuddy.list_queue()
-    tracked = store.tracked_item_ids()
+    tracked = store.tracked_item_ids(group_id)
     adopted = []
     for it in items or []:
         iid = it.get("id")
@@ -1286,10 +1288,17 @@ async def _check_completions():
             if not printer_active:
                 continue
             thumb = await _thumbnail(job.get("library_file_id"), job.get("plate_index"))
+            # Right after dispatch the P1S usually still reports remaining_time
+            # 0/None (heating/preparing), which would drop the ETA entirely. Fall
+            # back to the item's sliced print time so every start gets an estimate.
+            rem = pstatus.get("remaining_time")
+            if not rem or rem <= 0:
+                secs = item.get("print_time_seconds")
+                rem = secs / 60 if secs else None
             await signal_client.send_to_group(
                 job["group_id"],
                 i18n.t(lang, "completion_started", name=job["model_name"],
-                       eta=_eta_phrase(pstatus.get("remaining_time"), lang)),
+                       eta=_eta_phrase(rem, lang)),
                 attachments=[thumb] if thumb else None,
             )
             store.set_stage(job["id"], "printing")

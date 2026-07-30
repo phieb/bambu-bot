@@ -49,6 +49,29 @@ def test_eta_phrase():
     assert "2 h 15 min" in p and "Fertig ca." in p and "Uhr" in p
 
 
+def test_start_eta_falls_back_to_sliced_print_time(tmp_path, monkeypatch):
+    """Right after dispatch the printer often reports no remaining_time yet — the
+    ETA must then come from the queue item's sliced print_time_seconds."""
+    config.DB_PATH = str(tmp_path / "t.db")
+    store.init_db()
+    store.add_queued("group.x", "+1", "Benchy", 4, 42)
+
+    sent = []
+    monkeypatch.setattr(handlers.signal_client, "send_to_group",
+                        lambda gid, msg, **kw: sent.append(msg) or _none())
+
+    async def _get_item(_id):
+        return {"status": "printing", "print_time_seconds": 8100}  # 2 h 15 min
+
+    async def _pstatus(_pid):
+        return {"state": "RUNNING", "remaining_time": 0}  # not computed yet
+    monkeypatch.setattr(handlers.bambuddy, "get_queue_item", _get_item)
+    monkeypatch.setattr(handlers.bambuddy, "printer_status", _pstatus)
+
+    asyncio.run(handlers._check_completions())
+    assert len(sent) == 1 and "Fertig ca." in sent[0] and "2 h 15 min" in sent[0]
+
+
 def test_completion_watch_announces_start_then_finish(tmp_path, monkeypatch):
     config.DB_PATH = str(tmp_path / "t.db")
     store.init_db()
