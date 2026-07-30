@@ -30,18 +30,20 @@ def _setup(tmp_path, monkeypatch, queue_items):
 def test_abo_parsing():
     c = classify.classify
     assert c({"dataMessage": {"message": "!abo"}})["abo_command"] == {"action": "help"}
+    # "all" covers future prints too — a snapshot of exactly the currently-open
+    # set was a distinction nobody wanted.
     assert c({"dataMessage": {"message": "!abo all"}})["abo_command"] == {
-        "action": "subscribe", "all": True, "positions": []}
+        "action": "subscribe", "all": True, "positions": [], "standing": True}
     assert c({"dataMessage": {"message": "!abo alle"}})["abo_command"]["all"] is True
     assert c({"dataMessage": {"message": "!abo 2 3"}})["abo_command"] == {
-        "action": "subscribe", "all": False, "positions": [2, 3]}
+        "action": "subscribe", "all": False, "positions": [2, 3]}   # one-off, no standing
     assert c({"dataMessage": {"message": "!abo 2,4,1"}})["abo_command"]["positions"] == [2, 4, 1]
     assert c({"dataMessage": {"message": "!abo stop"}})["abo_command"] == {
-        "action": "unsubscribe", "all": True, "positions": []}
+        "action": "unsubscribe", "all": True, "positions": [], "standing": True}
     assert c({"dataMessage": {"message": "!abo stop 2"}})["abo_command"] == {
         "action": "unsubscribe", "all": False, "positions": [2]}
     assert c({"dataMessage": {"message": "!deabo"}})["abo_command"] == {
-        "action": "unsubscribe", "all": True, "positions": []}
+        "action": "unsubscribe", "all": True, "positions": [], "standing": True}
     assert c({"dataMessage": {"message": "!deabo 3"}})["abo_command"]["positions"] == [3]
     # garbage arg → help, not a no-op
     assert c({"dataMessage": {"message": "!abo wat"}})["abo_command"] == {"action": "help"}

@@ -1283,29 +1283,31 @@ async def _abo(group_id, cmd):
     lang = _lang(group_id)
     action = cmd["action"]
 
-    # Standing subscription first: setting the flag must work even when Bambuddy
-    # is unreachable, so it goes before any queue fetch.
+    # "all"/"immer" is the standing subscription: every print, future ones too.
+    # Handled first because setting the flag must work even when Bambuddy is
+    # unreachable — only the catch-up adoption below needs the queue.
     if cmd.get("standing"):
-        on = action == "subscribe"
-        store.set_standing_abo(group_id, on)
-        if not on:
-            await signal_client.send_to_group(group_id, i18n.t(lang, "abo_standing_off"))
+        if action != "subscribe":
+            was_on = store.get_standing_abo(group_id)
+            store.set_standing_abo(group_id, False)
+            # Mute without touching the live queue, so prints that already aged
+            # out of Bambuddy can still be unsubscribed.
+            removed = store.untrack_all(group_id)
+            key = ("abo_standing_off" if (removed or was_on) else "abo_nothing_subbed")
+            await signal_client.send_to_group(group_id, i18n.t(lang, key, n=removed))
             return
+        store.set_standing_abo(group_id, True)
         items = await _open_queue()
         plates = await _plate_names(items)
+        ids = [it["id"] for it in items if it.get("id") is not None]
+        printing = {it["id"] for it in items
+                    if (it.get("status") or "").lower() == "printing"}
+        revived = store.revive_trackers(group_id, ids, printing)
         tracked = store.tracked_item_ids(group_id)
-        n = sum(1 for it in items
-                if it.get("id") is not None and it.get("id") not in tracked
-                and _adopt_item(group_id, it, plates))
+        n = revived + sum(1 for it in items
+                          if it.get("id") is not None and it.get("id") not in tracked
+                          and _adopt_item(group_id, it, plates))
         await signal_client.send_to_group(group_id, i18n.t(lang, "abo_standing_on", n=n))
-        return
-
-    # Mute everything without touching the live queue (so prints that already
-    # aged out of Bambuddy can still be unsubscribed).
-    if action == "unsubscribe" and cmd["all"]:
-        removed = store.untrack_all(group_id)
-        key = "abo_unsubscribed" if removed else "abo_nothing_subbed"
-        await signal_client.send_to_group(group_id, i18n.t(lang, key, n=removed))
         return
 
     open_items = await _open_queue()
@@ -1351,7 +1353,10 @@ async def _abo(group_id, cmd):
         # and a muted tracker still counts as "tracked" (that's what keeps the
         # standing-abo pass from re-adopting it).
         ids = [it.get("id") for it in targets if it.get("id") is not None]
-        revived = store.revive_trackers(group_id, ids)
+        printing = {it["id"] for it in targets
+                    if it.get("id") is not None
+                    and (it.get("status") or "").lower() == "printing"}
+        revived = store.revive_trackers(group_id, ids, printing)
         tracked = store.tracked_item_ids(group_id)
         adopted = [_adopt_item(group_id, it, plates) for it in targets
                    if it.get("id") is not None and it.get("id") not in tracked]

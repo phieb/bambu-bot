@@ -436,19 +436,29 @@ def untrack_all(group_id):
         return cur.rowcount
 
 
-def revive_trackers(group_id, item_ids):
+def revive_trackers(group_id, item_ids, printing_item_ids=()):
     """Un-mute trackers a group earlier stopped, so it can re-subscribe to a print
-    it silenced. Returns how many were revived."""
+    it silenced. Returns how many were revived.
+
+    ``printing_item_ids`` are the ones already running on the machine; they come
+    back as 'printing', not 'queued'. Reviving a mid-print job to 'queued' makes
+    the completion poller read the next tick as a queued→printing transition and
+    announce "druckt jetzt los" for a print that started hours ago — the same
+    trap _adopt_item avoids for freshly adopted items."""
     if not item_ids:
         return 0
-    qs = ",".join("?" * len(item_ids))
+    now = time.time()
+    printing = set(printing_item_ids or ())
+    revived = 0
     with _conn() as c:
-        cur = c.execute(
-            f"UPDATE jobs SET stage='queued', updated_at=? "
-            f"WHERE group_id=? AND stage='cancelled' AND queue_item_id IN ({qs})",
-            (time.time(), group_id, *item_ids),
-        )
-        return cur.rowcount
+        for iid in item_ids:
+            cur = c.execute(
+                "UPDATE jobs SET stage=?, updated_at=? "
+                "WHERE group_id=? AND stage='cancelled' AND queue_item_id=?",
+                ("printing" if iid in printing else "queued", now, group_id, iid),
+            )
+            revived += cur.rowcount
+    return revived
 
 
 def queued_jobs_with_item():

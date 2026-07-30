@@ -58,20 +58,23 @@ def _items(*specs):
 # ----- parsing -----
 
 def test_standing_parsing():
-    for msg in ("!abo immer", "!abo always", "!abo dauer", "!abonnieren permanent"):
+    """"all" and "immer" mean the same thing: everything, future prints included."""
+    for msg in ("!abo all", "!abo alle", "!abo immer", "!abo always", "!abo dauer",
+                "!abonnieren permanent"):
         assert classify.abo_command(msg) == {
-            "action": "subscribe", "all": False, "positions": [], "standing": True}, msg
-    for msg in ("!abo stop immer", "!deabo immer", "!abo aus always"):
+            "action": "subscribe", "all": True, "positions": [], "standing": True}, msg
+    # A bare stop stops everything, standing included.
+    for msg in ("!abo stop", "!deabo", "!abo stop all", "!abo stop immer", "!deabo immer"):
         assert classify.abo_command(msg) == {
-            "action": "unsubscribe", "all": False, "positions": [], "standing": True}, msg
+            "action": "unsubscribe", "all": True, "positions": [], "standing": True}, msg
 
 
-def test_existing_abo_shapes_unchanged():
-    """The standing key must not leak into the other shapes (exact-equality tests)."""
-    assert classify.abo_command("!abo all") == {
-        "action": "subscribe", "all": True, "positions": []}
+def test_numbered_form_is_still_a_one_off():
+    """Only !abo <positions> is a snapshot — it must not turn on the standing flag."""
     assert classify.abo_command("!abo 2 3") == {
         "action": "subscribe", "all": False, "positions": [2, 3]}
+    assert classify.abo_command("!abo stop 2") == {
+        "action": "unsubscribe", "all": False, "positions": [2]}
     assert classify.abo_command("!abo") == {"action": "help"}
 
 
@@ -175,33 +178,79 @@ def test_each_standing_group_gets_its_own_tracker(monkeypatch):
 
 # ----- the command -----
 
-def test_abo_immer_turns_on_and_adopts_open_items(monkeypatch):
+_ALL = {"action": "subscribe", "all": True, "positions": [], "standing": True}
+_STOP = {"action": "unsubscribe", "all": True, "positions": [], "standing": True}
+
+
+def test_abo_all_turns_on_standing_and_adopts_open_items(monkeypatch):
     sent = _stub(monkeypatch, _items((1, "pending", "Alpha"), (2, "completed", "Old")))
-    asyncio.run(handlers._abo("g1", {"action": "subscribe", "all": False,
-                                     "positions": [], "standing": True}))
+    asyncio.run(handlers._abo("g1", _ALL))
     assert store.get_standing_abo("g1") is True
     assert {j["queue_item_id"] for j in store.queued_jobs_with_item()} == {1}
-    assert "Dauer-Abo an" in sent[-1][1]
+    # The message must promise future prints, not just "2 subscribed".
+    assert "künftigen" in sent[-1][1]
 
 
-def test_abo_stop_immer_keeps_existing_trackers(monkeypatch):
+def test_abo_all_then_future_print_is_picked_up(monkeypatch):
+    """The whole point of !abo all — a print queued later must reach you."""
+    items = _items((1, "pending", "Alpha"))
+    _stub(monkeypatch, items)
+    asyncio.run(handlers._abo("g1", _ALL))
+    items.append(_items((2, "pending", "Queued later"))[0])
+    asyncio.run(handlers._check_completions())
+    assert {j["queue_item_id"] for j in store.queued_jobs_with_item()} == {1, 2}
+
+
+def test_abo_stop_ends_standing_and_mutes_everything(monkeypatch):
     sent = _stub(monkeypatch, _items((1, "pending", "Alpha")))
-    asyncio.run(handlers._abo("g1", {"action": "subscribe", "all": False,
-                                     "positions": [], "standing": True}))
-    asyncio.run(handlers._abo("g1", {"action": "unsubscribe", "all": False,
-                                     "positions": [], "standing": True}))
+    asyncio.run(handlers._abo("g1", _ALL))
+    asyncio.run(handlers._abo("g1", _STOP))
     assert store.get_standing_abo("g1") is False
-    assert len(store.queued_jobs_with_item()) == 1      # legitimately adopted, kept
-    assert "Dauer-Abo aus" in sent[-1][1]
+    assert store.queued_jobs_with_item() == []
+    assert "Abo aus" in sent[-1][1]
+    # and it stays off — no silent re-adoption on the next poll
+    asyncio.run(handlers._check_completions())
+    assert store.queued_jobs_with_item() == []
 
 
 def test_abo_help_shows_standing_state(monkeypatch):
     sent = _stub(monkeypatch, _items((1, "pending", "Alpha")))
     asyncio.run(handlers._abo("g1", {"action": "help"}))
-    assert "Dauer-Abo: aus" in sent[-1][1]
+    assert "Abo für alles: aus" in sent[-1][1]
     store.set_standing_abo("g1", True)
     asyncio.run(handlers._abo("g1", {"action": "help"}))
-    assert "Dauer-Abo: **an**" in sent[-1][1]
+    assert "an für alles" in sent[-1][1]
+
+
+def test_resubscribing_a_running_print_does_not_fake_a_start(monkeypatch):
+    """Regression: !abo stop then !abo all revived a mid-print job as 'queued', so
+    the next poll read it as queued→printing and announced "druckt jetzt los" for
+    a print that had been running for hours."""
+    items = _items((1, "printing", "Been running for hours"))
+    sent = _stub(monkeypatch, items, printer={"state": "RUNNING", "hms_errors": []})
+    asyncio.run(handlers._abo("g1", _ALL))
+    asyncio.run(handlers._abo("g1", _STOP))
+    sent.clear()
+
+    asyncio.run(handlers._abo("g1", _ALL))
+    assert store.queued_jobs_with_item()[0]["stage"] == "printing"
+    asyncio.run(handlers._check_completions())
+    assert not any("druckt jetzt" in m for _, m in sent), sent
+
+
+def test_resubscribing_a_pending_print_still_announces_its_start(monkeypatch):
+    """Guard the other direction: a genuinely not-yet-started print must still
+    announce when it starts."""
+    items = _items((1, "pending", "Not started yet"))
+    sent = _stub(monkeypatch, items, printer={"state": "RUNNING", "hms_errors": []})
+    asyncio.run(handlers._abo("g1", _ALL))
+    asyncio.run(handlers._abo("g1", _STOP))
+    asyncio.run(handlers._abo("g1", _ALL))
+    sent.clear()
+
+    items[0]["status"] = "printing"
+    asyncio.run(handlers._check_completions())
+    assert any("druckt jetzt" in m for _, m in sent), sent
 
 
 def test_resubscribe_after_stop(monkeypatch):

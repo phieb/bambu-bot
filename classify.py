@@ -67,9 +67,9 @@ def abo_command(message):
     Positions refer to the 1-based order shown by !liste. Unknown arguments fall
     back to {'action':'help'} so a typo shows usage instead of doing nothing.
 
-    '!abo immer' / '!abo stop immer' additionally carry 'standing': True — the
-    standing subscription. Only that branch carries the key, so the existing
-    shapes above stay byte-identical."""
+    'all'/'alle'/'immer'/'always' — and a bare '!abo stop' / '!deabo' — carry
+    'standing': True: they cover every print, including future ones. Only the
+    numbered form ('!abo 2 3') is a one-off on specific queue positions."""
     m = _ABO.match(message or "")
     deabo = False
     if not m:
@@ -80,10 +80,12 @@ def abo_command(message):
     arg = (m.group(1) or "").strip().lower()
 
     def _resolve(rest, action):
-        if rest in _ALWAYS_WORDS:
-            return {"action": action, "all": False, "positions": [], "standing": True}
-        if not rest or rest in _ALL_WORDS:
-            return {"action": action, "all": True, "positions": []}
+        # "all" means what people expect it to mean: every print, including the
+        # ones queued tomorrow. A snapshot of exactly the currently-open set was
+        # a distinction nobody wanted (and read as a promise it didn't keep).
+        # Bare "!abo stop" / "!deabo" likewise stops everything, standing included.
+        if not rest or rest in _ALL_WORDS or rest in _ALWAYS_WORDS:
+            return {"action": action, "all": True, "positions": [], "standing": True}
         pos = _abo_positions(rest)
         if pos is None:
             return {"action": "help"}

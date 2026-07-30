@@ -357,53 +357,53 @@ _M = {
         "de": ("🔔 Abo — Benachrichtigungen für Start & Ende eines Drucks.\n"
                "{standing}"
                "🔔 = abonniert, 🔕 = nicht.\n{lines}\n\n"
-               "• !abo immer → Dauer-Abo: jeder neue Druck automatisch\n"
-               "• !abo all → alle offenen abonnieren\n"
-               "• !abo 2 3 → nur diese Nummern\n"
-               "• !abo stop (oder !deabo) → alle abbestellen, !abo stop 2 → nur Nummer 2"),
+               "• !abo all → alles abonnieren, auch jeden künftigen Druck\n"
+               "• !abo 2 3 → nur diese Nummern (einmalig)\n"
+               "• !abo stop (oder !deabo) → alles abbestellen, !abo stop 2 → nur Nummer 2"),
         "en": ("🔔 Subscriptions — get notified about a print's start & finish.\n"
                "{standing}"
                "🔔 = subscribed, 🔕 = not.\n{lines}\n\n"
-               "• !abo immer → standing subscription: every new print automatically\n"
-               "• !abo all → subscribe to all open ones\n"
-               "• !abo 2 3 → only these numbers\n"
-               "• !abo stop (or !deabo) → unsubscribe all, !abo stop 2 → only number 2"),
+               "• !abo all → subscribe to everything, future prints included\n"
+               "• !abo 2 3 → only these numbers (one-off)\n"
+               "• !abo stop (or !deabo) → unsubscribe from everything, !abo stop 2 → only number 2"),
     },
     "abo_help_empty": {
         "de": ("🔔 Keine offenen Drucke in der Queue.\n"
                "{standing}"
-               "Sobald welche da sind: !abo immer abonniert automatisch jeden neuen, "
-               "!abo all alle offenen, !abo 2 3 nur bestimmte Nummern aus !liste."),
+               "Mit !abo all abonnierst du alles — auch jeden künftigen Druck. "
+               "!abo 2 3 nimmt nur bestimmte Nummern aus !liste."),
         "en": ("🔔 No open prints in the queue.\n"
                "{standing}"
-               "Once there are some: !abo immer subscribes to every new one automatically, "
-               "!abo all to all open ones, !abo 2 3 only specific numbers from !list."),
+               "!abo all subscribes to everything — future prints included. "
+               "!abo 2 3 takes only specific numbers from !list."),
     },
     "abo_standing_on": {
-        "de": ("🔔 Dauer-Abo an — ab jetzt meld ich dir **jeden** neuen Druck automatisch, "
-               "egal woher er kommt. ({n} offene(r) Druck(e) gleich mit abonniert.)\n"
-               "Wieder aus: !abo stop immer"),
-        "en": ("🔔 Standing subscription on — from now on I'll notify you about **every** "
-               "new print, whatever its source. (Subscribed to {n} open print(s) right away.)\n"
-               "Turn off: !abo stop immer"),
+        "de": ("🔔 Abo an — ab jetzt meld ich dir **jeden** Druck: die {n} gerade offenen "
+               "und automatisch alle künftigen, egal woher sie kommen.\n"
+               "Wieder aus: !abo stop"),
+        "en": ("🔔 Subscribed — from now on I'll report **every** print: the {n} open right "
+               "now, plus every future one automatically, whatever its source.\n"
+               "Turn off: !abo stop"),
     },
     "abo_standing_off": {
-        "de": ("🔕 Dauer-Abo aus — neue Drucke abonnier ich nicht mehr automatisch. "
-               "Die schon laufenden Abos bleiben (mit !abo stop beendest du die)."),
-        "en": ("🔕 Standing subscription off — new prints are no longer subscribed "
-               "automatically. Existing subscriptions stay (use !abo stop to end those)."),
+        "de": ("🔕 Abo aus — {n} laufende(s) Abo(s) beendet, und künftige Drucke "
+               "abonnier ich auch nicht mehr automatisch."),
+        "en": ("🔕 Unsubscribed — ended {n} running subscription(s), and I'll no longer "
+               "pick up future prints automatically."),
     },
     "abo_standing_state_on": {
-        "de": "♾️ Dauer-Abo: **an** — jeder neue Druck wird automatisch abonniert.\n",
-        "en": "♾️ Standing subscription: **on** — every new print is subscribed automatically.\n",
+        "de": "♾️ Abo: **an für alles** — auch jeder künftige Druck.\n",
+        "en": "♾️ Subscription: **on for everything** — every future print too.\n",
     },
     "abo_standing_state_off": {
-        "de": "♾️ Dauer-Abo: aus — !abo immer schaltet es an.\n",
-        "en": "♾️ Standing subscription: off — !abo immer turns it on.\n",
+        "de": "♾️ Abo für alles: aus — !abo all abonniert alles (auch künftige Drucke).\n",
+        "en": "♾️ Subscribe-to-everything: off — !abo all covers everything (future prints too).\n",
     },
     "abo_subscribed": {
-        "de": "🔔 {n} Druck(e) abonniert — ich melde Start & Ende:\n{lines}",
-        "en": "🔔 Subscribed to {n} print(s) — I'll report start & finish:\n{lines}",
+        "de": ("🔔 {n} Druck(e) abonniert — ich melde Start & Ende:\n{lines}\n"
+               "(Nur diese. Für alles inkl. künftiger Drucke: !abo all)"),
+        "en": ("🔔 Subscribed to {n} print(s) — I'll report start & finish:\n{lines}\n"
+               "(Just these. For everything incl. future prints: !abo all)"),
     },
     "abo_already": {
         "de": "🔔 Schon abonniert — keine neuen Drucke hinzugefügt.",
