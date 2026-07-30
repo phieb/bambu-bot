@@ -382,6 +382,24 @@ def tracked_item_ids(group_id=None):
         return {r["queue_item_id"] for r in rows}
 
 
+def subscribed_item_ids(group_id):
+    """queue_item_ids this group will *actually* still be notified about — only
+    live trackers ('queued'/'printing').
+
+    Distinct from tracked_item_ids on purpose: that one is stage-agnostic because
+    a muted ('cancelled') row has to keep counting as tracked, or the standing-abo
+    pass would re-adopt what the user just stopped. But for display, a muted or
+    finished row is *not* a subscription — showing 🔔 for it told the user their
+    !abo stop hadn't worked."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT DISTINCT queue_item_id FROM jobs WHERE group_id=? "
+            "AND queue_item_id IS NOT NULL AND stage IN ('queued','printing')",
+            (group_id,),
+        ).fetchall()
+        return {r["queue_item_id"] for r in rows}
+
+
 def untrack_items(group_id, item_ids):
     """Mute a group's active trackers for the given Bambuddy queue_item_ids (used
     by !abo stop <n>). Only mutes notifications for this group — the print itself

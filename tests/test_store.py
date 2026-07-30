@@ -101,3 +101,19 @@ def test_add_queued_defaults_stay_null(tmp_path):
     assert job["plate_index"] is None
     assert job["plate_name"] is None
     assert job["archive_id"] is None
+
+
+def test_subscribed_vs_tracked_item_ids(tmp_path):
+    """tracked_item_ids is stage-agnostic (so the standing-abo pass skips muted
+    rows); subscribed_item_ids is what the user is actually still notified about."""
+    config.DB_PATH = str(tmp_path / "t.db")
+    store.init_db()
+    store.add_queued("g1", "", "Live", None, 1)                              # queued
+    store.set_stage(store.add_queued("g1", "", "Running", None, 2), "printing")
+    store.set_stage(store.add_queued("g1", "", "Muted", None, 3), "cancelled")
+    store.set_stage(store.add_queued("g1", "", "Finished", None, 4), "done")
+    store.add_queued("g2", "", "Other group", None, 9)
+
+    assert store.tracked_item_ids("g1") == {1, 2, 3, 4}      # history included
+    assert store.subscribed_item_ids("g1") == {1, 2}         # only live trackers
+    assert store.subscribed_item_ids("g2") == {9}

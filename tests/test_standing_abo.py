@@ -213,3 +213,29 @@ def test_resubscribe_after_stop(monkeypatch):
 
     asyncio.run(handlers._abo("g1", {"action": "subscribe", "all": True, "positions": []}))
     assert {j["queue_item_id"] for j in store.queued_jobs_with_item()} == {1}
+
+
+def test_abo_help_shows_stopped_prints_as_unsubscribed(monkeypatch):
+    """!abo stop → !abo must show 🔕, not 🔔. tracked_item_ids is stage-agnostic
+    on purpose (that's what makes the standing pass skip a muted row), so the
+    display needs the *active* set instead."""
+    sent = _stub(monkeypatch, _items((1, "pending", "Alpha"), (2, "pending", "Beta")))
+    asyncio.run(handlers._abo("g1", {"action": "subscribe", "all": True, "positions": []}))
+    asyncio.run(handlers._abo("g1", {"action": "help"}))
+    assert sent[-1][1].count("🔔") >= 2          # both subscribed
+
+    asyncio.run(handlers._abo("g1", {"action": "unsubscribe", "all": True, "positions": []}))
+    asyncio.run(handlers._abo("g1", {"action": "help"}))
+    lines = [ln for ln in sent[-1][1].splitlines() if ln[:1].isdigit()]
+    assert len(lines) == 2
+    assert all("🔕" in ln for ln in lines), sent[-1][1]
+
+
+def test_abo_help_shows_finished_prints_as_unsubscribed(monkeypatch):
+    """A tracker that already ran to completion isn't an active subscription."""
+    sent = _stub(monkeypatch, _items((1, "pending", "Alpha")))
+    asyncio.run(handlers._abo("g1", {"action": "subscribe", "all": True, "positions": []}))
+    store.set_stage(store.last_queued_job("g1")["id"], "done")
+    asyncio.run(handlers._abo("g1", {"action": "help"}))
+    lines = [ln for ln in sent[-1][1].splitlines() if ln[:1].isdigit()]
+    assert all("🔕" in ln for ln in lines), sent[-1][1]

@@ -1319,8 +1319,11 @@ async def _abo(group_id, cmd):
             await signal_client.send_to_group(
                 group_id, i18n.t(lang, "abo_help_empty", standing=standing))
             return
+        # The *live* set, not `tracked`: a muted or finished row still counts as
+        # tracked (so the standing pass skips it) but is not a subscription.
+        subscribed = store.subscribed_item_ids(group_id)
         lines = "\n".join(
-            f'{i}. {"🔔" if it.get("id") in tracked else "🔕"} {_item_name(it, plates)}'
+            f'{i}. {"🔔" if it.get("id") in subscribed else "🔕"} {_item_name(it, plates)}'
             for i, it in enumerate(open_items, 1))
         await signal_client.send_to_group(
             group_id, i18n.t(lang, "abo_help", lines=lines, standing=standing))
