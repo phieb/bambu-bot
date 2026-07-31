@@ -171,3 +171,24 @@ def test_shrink_image_handles_garbage():
     import swatch
     assert swatch.shrink_image(b"not an image") is None
     assert swatch.shrink_image(None) is None
+
+
+def test_swatch_keeps_side_margins_and_survives_a_long_name():
+    """The bands are inset from both edges on purpose — a preview crop that trims
+    the sides has to eat paper, not labels. And a long plate name must not spill
+    over the image edge."""
+    import base64
+    import io
+
+    import swatch
+    from PIL import Image
+
+    rc = colors.required_colors(RESOLVED)
+    ams = colors.ams_snapshot(STATUS)
+    img = Image.open(io.BytesIO(base64.b64decode(
+        swatch.build("Plate 2 — " + "Sehr langer Modellname " * 5, rc, ams))))
+    w, h = img.size
+    # a row through the first colour band: edges are background, centre is colour
+    y = int(h * 0.45)
+    assert img.getpixel((1, y)) == swatch._BG
+    assert img.getpixel((w - 2, y)) == swatch._BG

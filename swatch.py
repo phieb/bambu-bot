@@ -19,9 +19,13 @@ except Exception:  # pragma: no cover - Pillow always present in the image
 
 _W = 540
 _PAD = 20
-_ROW = 46          # row height
-_SW = 34           # swatch square size
-_HEADER = 34       # section header height
+_MARGIN = 22       # side breathing room, so a preview crop trims paper, not text
+_BAND = 58         # colour band height
+_HEADER = 40       # section header height (headline weight — a thin grey label
+                   # disappeared between two saturated bands)
+_KICKER = 34       # "FARBTAFEL" headline above the model name
+_TITLE = 30
+_SUB = 26          # explainer line under the title
 _BG = (250, 250, 250)
 _FG = (30, 30, 30)
 _MUTED = (110, 110, 110)
@@ -42,6 +46,22 @@ def _font(size, bold=False):
         return ImageFont.load_default(size)  # Pillow >= 10
     except TypeError:
         return ImageFont.load_default()
+
+
+def _text_on(rgb):
+    """Black or white label, whichever stays readable on ``rgb`` (perceived
+    luminance, so a mid yellow gets dark text and a navy gets light text)."""
+    r, g, b = rgb
+    return _FG if (0.2126 * r + 0.7152 * g + 0.0722 * b) > 150 else (255, 255, 255)
+
+
+def _fit(d, text, font, max_w):
+    """``text`` truncated with an ellipsis until it fits ``max_w`` px."""
+    if d.textlength(text, font=font) <= max_w:
+        return text
+    while text and d.textlength(text + "…", font=font) > max_w:
+        text = text[:-1]
+    return text + "…"
 
 
 def _swatch_rgb(hex6):
@@ -97,47 +117,75 @@ def numbered_thumbnail(data, n, max_px=512, quality=82):
 
 
 def build(name, required, ams, lang="de"):
-    """Required colors + AMS slots as a labeled swatch PNG (base64) or None."""
+    """Required colors + AMS slots as a labeled swatch PNG (base64) or None.
+
+    Every colour is a wide band with its label written *on* it, rather than a
+    small chip beside the text: Signal previews a multi-image message as one
+    cropped thumbnail, and 34 px chips simply vanished at that size — the one
+    picture whose whole job is showing colours showed none.
+
+    The bands stop short of both edges (``_MARGIN``): a preview crop that trims
+    the sides then eats blank paper instead of the labels."""
     if Image is None:
         return None
     en = lang == "en"
     try:
         rows = len(required) + len(ams)
-        height = _PAD * 2 + _HEADER * 2 + rows * _ROW + 30
+        height = (_PAD * 2 + _KICKER + _TITLE + _SUB + _HEADER * 2 + rows * _BAND
+                  + 12)  # 2 × section gap
         img = Image.new("RGB", (_W, height), _BG)
         d = ImageDraw.Draw(img)
-        f_title = _font(22, bold=True)
-        f_head = _font(18, bold=True)
-        f_row = _font(18)
+        f_kicker = _font(28, bold=True)
+        f_title = _font(19)
+        f_sub = _font(15)
+        f_head = _font(21, bold=True)
+        f_row = _font(19, bold=True)
+        text_x = _MARGIN + 16
+        text_w = _W - 2 * text_x
 
         y = _PAD
-        title = name if len(name) <= 38 else name[:37] + "…"
-        d.text((_PAD, y), title, font=f_title, fill=_FG)
-        y += 30
+        # Say what the picture is, then what it's for — on its own it arrives as
+        # an unexplained block of colour. Kicker and name on separate lines: as
+        # one line the prefix ate the model name down to "Plate 2 — Varoresso XRO…".
+        d.text((_MARGIN, y), "COLOR SWATCHES" if en else "FARBTAFEL",
+               font=f_kicker, fill=_FG)
+        y += _KICKER
+        d.text((_MARGIN, y), _fit(d, name, f_title, _W - 2 * _MARGIN),
+               font=f_title, fill=_FG)
+        y += _TITLE
+        d.text((_MARGIN, y), ("Answer with the AMS slot number per model colour."
+                              if en else
+                              "Antworte mit der AMS-Slot-Nummer je Modellfarbe."),
+               font=f_sub, fill=_MUTED)
+        y += _SUB
 
         def section(label, items, fmt):
             nonlocal y
-            d.text((_PAD, y), label, font=f_head, fill=_MUTED)
+            d.text((_MARGIN, y + 8), label, font=f_head, fill=_FG)
             y += _HEADER
             for it in items:
                 rgb = _swatch_rgb(it["color"])
-                d.rectangle(
-                    [_PAD, y, _PAD + _SW, y + _SW],
-                    fill=rgb, outline=(150, 150, 150), width=1,
-                )
+                d.rectangle([_MARGIN, y, _W - _MARGIN, y + _BAND], fill=rgb)
+                # Hairline between bands so two identical colours still read as
+                # two slots.
+                d.line([(_MARGIN, y), (_W - _MARGIN, y)],
+                       fill=tuple(max(0, c - 25) for c in rgb))
                 cname = colors.color_name(it["color"], lang)
-                d.text((_PAD + _SW + 14, y + 6), fmt(it, cname), font=f_row, fill=_FG)
-                y += _ROW
+                text = _fit(d, fmt(it, cname), f_row, text_w)
+                bbox = d.textbbox((0, 0), text, font=f_row)
+                d.text((text_x, y + (_BAND - (bbox[3] - bbox[1])) / 2 - bbox[1]),
+                       text, font=f_row, fill=_text_on(rgb))
+                y += _BAND
+            y += 6
 
         color_word = "Color" if en else "Farbe"
         section(
-            (f"Model needs {len(required)} color(s):" if en
-             else f"Modell braucht {len(required)} Farbe(n):"),
+            ("ORIGINAL MODEL COLORS" if en else "FARBEN DES MODELLS"),
             required,
             lambda c, n: f"{color_word} {c['index'] + 1}:  {c['type']} {n}".rstrip(),
         )
         section(
-            "AMS slots:" if en else "AMS Slots:",
+            ("AVAILABLE AMS COLORS" if en else "VERFÜGBAR IM AMS"),
             ams,
             # Same label as the message text (real spool name when assigned), so
             # picture and text can't disagree about what sits in a slot.
