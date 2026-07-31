@@ -1,4 +1,5 @@
 """Async client for a Signal REST API (send messages, create groups)."""
+import base64
 import logging
 
 import httpx
@@ -8,10 +9,17 @@ import config
 log = logging.getLogger("bambu-bot")
 
 
+def _b64(a):
+    """Attachments go out as JSON, so they must be base64 strings. Raw image bytes
+    slipping through used to raise inside httpx — which, from the completion
+    poller, killed the whole poll cycle for every tracker, not just this send."""
+    return base64.b64encode(a).decode() if isinstance(a, (bytes, bytearray)) else a
+
+
 async def _send(recipients, message, attachments=None):
     body = {"number": config.BOT_NUMBER, "recipients": recipients, "message": message}
     if attachments:
-        body["base64_attachments"] = attachments
+        body["base64_attachments"] = [_b64(a) for a in attachments]
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(config.SIGNAL_URL + "/v2/send", json=body)
         r.raise_for_status()

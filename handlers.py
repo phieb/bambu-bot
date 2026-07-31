@@ -415,20 +415,26 @@ async def _thumbnail(lfid, plate_index):
 
 
 async def _job_thumbnail(job):
-    """Preview for a tracker row: the archive plate render for adopted Studio
-    prints, else the library plate/model render. Never raises.
+    """Preview for a tracker row, ready to attach (base64 JPEG): the archive plate
+    render for adopted Studio prints, else the library plate/model render.
+
+    Returns a *base64 string*, not the raw PNG bytes the bambuddy helpers give
+    back — Signal attachments are JSON, so handing raw bytes to send_to_group
+    raises inside httpx and (from the completion poller) takes down that whole
+    poll cycle for every tracker.
 
     Adopted jobs live in an *archive*, not the library, so the library lookup
     can't see them; and ``plate_index`` used to be NULL on every tracker, which
     made ``plate_thumbnail`` fail silently on int(None) and always degrade to the
     generic model image."""
+    raw = None
     if job.get("archive_id") and job.get("plate_index"):
-        img = await bambuddy.archive_plate_thumbnail(job["archive_id"], job["plate_index"])
-        if img:
-            return img
-    if job.get("library_file_id"):
-        return await _thumbnail(job["library_file_id"], job.get("plate_index") or 1)
-    return None
+        raw = await bambuddy.archive_plate_thumbnail(job["archive_id"], job["plate_index"])
+    if not raw and job.get("library_file_id"):
+        raw = await _thumbnail(job["library_file_id"], job.get("plate_index") or 1)
+    if not raw:
+        return None
+    return await asyncio.to_thread(swatch.shrink_image, raw)
 
 
 async def _send_plate_question(group_id, lfid, name, plates):
