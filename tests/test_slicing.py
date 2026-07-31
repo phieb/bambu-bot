@@ -101,7 +101,16 @@ def test_preset_name_resolves_the_display_name():
     assert slicing.preset_name(PRESETS, "filament", "nope") == ""
 
 
-def test_filament_none_when_nothing_matches():
-    assert slicing.filament_preset(PRESETS, "P1S", "0.4", "TPU", "") is not None  # falls back ignoring type
+def test_filament_none_rather_than_the_wrong_material():
+    # A known material with no preset for this printer/nozzle must abort the slice.
+    # The old "any preset that fits the machine" fallback resolved PLA on a 0.8
+    # nozzle to 'Bambu PC @BBL P1S 0.8 nozzle' — PC temperatures for PLA.
+    assert slicing.filament_preset(PRESETS, "P1S", "0.4", "TPU", "") is None
     empty = {"cloud": {"filament": []}, "standard": {}, "local": {}}
     assert slicing.filament_preset(empty, "P1S", "0.4", "PLA", "") is None
+
+
+def test_filament_falls_back_when_the_ams_reports_no_material():
+    # An empty tray_type is "unknown", not "wrong" — a raw STL with no filament
+    # list gets here, and any preset for the right machine beats refusing to slice.
+    assert slicing.filament_preset(PRESETS, "P1S", "0.4", "", "") is not None

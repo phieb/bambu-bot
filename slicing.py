@@ -106,11 +106,18 @@ def filament_preset(presets, model, nozzle, tray_type, sub_brand, filament_name=
     pool = _all(presets, "filament")
     if system_only:
         pool = [p for p in pool if is_system(p)]
-    cands = [p for p in pool
-             if model in p["name"] and noz in p["name"] and tray_type and tray_type in p["name"]]
-    if not cands:  # last resort: ignore type, just the right printer/nozzle
-        cands = [p for p in pool if model in p["name"] and noz in p["name"]]
+    fits = [p for p in pool if model in p["name"] and noz in p["name"]]
+    cands = [p for p in fits if tray_type and tray_type in p["name"]]
+    if not cands and not tray_type:
+        # Only when the AMS didn't report a material at all: any preset for the
+        # right printer/nozzle beats refusing to slice.
+        cands = fits
     if not cands:
+        # A known material with no preset for this printer/nozzle. There used to be
+        # a "just take any preset that fits the machine" fallback here, which is how
+        # PLA on a 0.8 nozzle resolved to 'Bambu PC @BBL P1S 0.8 nozzle' — PC's
+        # ~260 °C and bed temp for PLA. Wrong-material gcode is worse than no gcode,
+        # so return None and let the caller abort with a message.
         return None
 
     generic = _TYPE_GENERIC.get(tray_type)

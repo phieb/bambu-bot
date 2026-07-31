@@ -42,7 +42,18 @@ def test_plate_command_parses():
     assert classify.plate_command("!platte")["action"] == "status"
     assert classify.plate_command("!platte cool") == {"action": "set", "bed_type": "Cool Plate"}
     assert classify.plate_command("!bett textured pei")["bed_type"] == "Textured PEI Plate"
-    assert classify.plate_command("!plate SUPERTACK")["bed_type"] == "Cool Plate (SuperTack)"
+    assert classify.plate_command("!plate SUPERTACK")["bed_type"] == "Supertack Plate"
+
+
+def test_every_bed_alias_is_a_name_the_slicer_honours():
+    """An unhonoured plate name is worse than a rejected one: the API takes it, the
+    user gets a confirmation, and the slice quietly comes out as Cool Plate. That
+    is exactly how '!platte supertack' produced a 55 °C Cool Plate first layer on a
+    SuperTack plate. Keep the alias targets pinned to what was verified against the
+    real slicer."""
+    unhonoured = {v for v in classify.BED_ALIASES.values()
+                  if v not in classify.VERIFIED_BED_TYPES}
+    assert not unhonoured
     assert classify.plate_command("!platte banana") == {"action": "unknown", "arg": "banana"}
 
 

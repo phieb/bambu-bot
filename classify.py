@@ -150,19 +150,35 @@ def eject_command(message):
 # Set the build plate on the printer; optional arg (a short alias below) → its
 # canonical slicer curr_bed_type. No arg → show the current plate.
 _PLATE = re.compile(r"^\s*!\s*(?:platte|druckbett|bett|plate|bed)(?:\s+(.+?))?\s*$", re.I)
+# The curr_bed_type values the slicer actually honours. Anything else is passed
+# through and *silently* falls back to 'Cool Plate' — no error, just the wrong bed
+# temperature and first-layer Z. Verified 2026-07-31 by slicing the same file with
+# each value and reading ``; curr_bed_type`` back out of the gcode: these five
+# round-trip, while 'Cool Plate (SuperTack)' and 'Smooth PEI Plate' (both plausible
+# names, and both previously in the alias table below) came back as 'Cool Plate'.
+# 'Engineering Plate' is honoured and loudly rejects incompatible filament.
+VERIFIED_BED_TYPES = {
+    "Cool Plate", "Supertack Plate", "Engineering Plate",
+    "High Temp Plate", "Textured PEI Plate",
+}
+
 # Short names the user can type → canonical BambuStudio/OrcaSlicer plate name.
-# Matched against the space-collapsed, lower-cased argument.
+# Matched against the space-collapsed, lower-cased argument. Every value here must
+# be in VERIFIED_BED_TYPES (there is a test) — an unhonoured name is worse than a
+# rejected one, because the user sees a confirmation and gets Cool Plate anyway.
 BED_ALIASES = {
     "cool": "Cool Plate", "cool plate": "Cool Plate", "kühl": "Cool Plate", "kuehl": "Cool Plate",
     "textured": "Textured PEI Plate", "textur": "Textured PEI Plate", "pei": "Textured PEI Plate",
     "textured pei": "Textured PEI Plate", "textured pei plate": "Textured PEI Plate",
-    "smooth": "Smooth PEI Plate", "glatt": "Smooth PEI Plate",
-    "smooth pei": "Smooth PEI Plate", "smooth pei plate": "Smooth PEI Plate",
+    # Bambu's "Smooth PEI Plate" is the marketing name of the High Temp Plate; the
+    # slicer only knows the latter.
+    "smooth": "High Temp Plate", "glatt": "High Temp Plate",
+    "smooth pei": "High Temp Plate", "smooth pei plate": "High Temp Plate",
     "engineering": "Engineering Plate", "eng": "Engineering Plate", "engineering plate": "Engineering Plate",
     "hot": "High Temp Plate", "high temp": "High Temp Plate", "hightemp": "High Temp Plate",
     "high temp plate": "High Temp Plate",
-    "supertack": "Cool Plate (SuperTack)", "tack": "Cool Plate (SuperTack)",
-    "cool plate (supertack)": "Cool Plate (SuperTack)",
+    "supertack": "Supertack Plate", "tack": "Supertack Plate",
+    "supertack plate": "Supertack Plate", "cool plate (supertack)": "Supertack Plate",
 }
 
 

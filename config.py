@@ -30,7 +30,7 @@ EJECT_MAX_HEIGHT_MM = float(os.environ.get("EJECT_MAX_HEIGHT_MM", "180"))
 # match the real plate — the P1S does NOT report its mounted plate over Bambuddy,
 # so this can't be auto-detected; set it to whatever is on the bed. Canonical
 # BambuStudio/OrcaSlicer values: 'Cool Plate', 'Engineering Plate', 'High Temp
-# Plate', 'Textured PEI Plate', 'Smooth PEI Plate', 'Cool Plate (SuperTack)',
-# 'Supertack Plate'. (Without this the slice inherits the preset default —
+# Plate', 'Textured PEI Plate', 'Supertack Plate' — see classify.VERIFIED_BED_TYPES;
+# names outside that set are accepted by the API and silently sliced as Cool Plate. (Without this the slice inherits the preset default —
 # 'Textured PEI Plate' — and runs e.g. PLA at 55/65 °C on a 35 °C Cool Plate.)
 BED_TYPE = os.environ.get("BAMBUDDY_BED_TYPE", "Cool Plate")
