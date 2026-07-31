@@ -459,9 +459,9 @@ async def _describe_slots(ams):
     Best-effort throughout: any lookup that fails just leaves the fields off and
     the question falls back to the hex guess."""
     try:
-        assigns, spools, presets, idmap = await asyncio.gather(
+        assigns, spools, presets, idmap, nozzle = await asyncio.gather(
             bambuddy.slot_assignments(), bambuddy.spoolman_spools(),
-            bambuddy.get_presets(), bambuddy.filament_id_map(),
+            bambuddy.get_presets(), bambuddy.filament_id_map(), _nozzle(),
             return_exceptions=True,
         )
     except Exception:
@@ -487,7 +487,8 @@ async def _describe_slots(ams):
             continue
         real_name = ({} if isinstance(idmap, Exception) else (idmap or {})).get(slot.get("info_idx") or "") or ""
         fp = slicing.filament_preset(
-            presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
+            presets, config.PRINTER_MODEL,
+            config.NOZZLE_DIAMETER if isinstance(nozzle, Exception) else nozzle,
             slot.get("type") or "", slot.get("sub") or "", real_name,
         )
         if fp:
@@ -765,10 +766,11 @@ def _gcode_machine_hint(data):
 # ";===== machine: P1S-0.4 ===" → "0.4". The P1S has no nozzle auto-detect, so we
 # compare this against the diameter the printer reports as fitted and refuse a
 # mismatch: 0.4 gcode pushed through a 0.2 nozzle under-extrudes / jams, and a
-# coarse slice on a fine nozzle won't bond. TODO: actually *support* other nozzles
-# — slice with the matching preset/profile (config.NOZZLE_DIAMETER drives the
-# Bambuddy slice; the sidecar fallback still needs a profiles/printer_p1s_0.2.json)
-# instead of only gating. For now the whole pipeline assumes 0.4 and we only guard.
+# coarse slice on a fine nozzle won't bond. The re-slice now *follows* the fitted
+# nozzle (``_nozzle`` → printer/process/filament preset), so this gate is the
+# backstop for files the bot didn't slice — a Signal .gcode upload, or a nozzle
+# swapped between slice and dispatch. Still 0.4-only: the sidecar fallback has no
+# profiles/printer_p1s_0.2.json and declines rather than emit 0.4 gcode.
 _GCODE_NOZZLE_RE = re.compile(rb";\s*=+\s*machine:\s*\S+?-([0-9.]+)\b")
 
 
@@ -970,7 +972,20 @@ async def _slice_all(group_id, job, decisions, plates):
     await signal_client.send_to_group(group_id, "\n".join(lines) + tail)
 
 
-def _filament_presets(presets, idmap, required, ams, mapping, system_only=False):
+async def _nozzle():
+    """The nozzle **actually fitted**, as the printer reports it
+    (``status.nozzles[].nozzle_diameter``), falling back to ``config.NOZZLE_DIAMETER``
+    when it can't be read.
+
+    Printer, process and filament preset all key off nozzle diameter — layer height
+    and flow are bounded by it — so slicing against a config default instead of the
+    physical nozzle yields gcode the machine can't print. The queue gate would then
+    refuse the bot's own output, which reads as "the bot is broken" rather than
+    "the nozzle changed"."""
+    return await bambuddy.mounted_nozzle(config.PRINTER_ID) or config.NOZZLE_DIAMETER
+
+
+def _filament_presets(presets, idmap, required, ams, mapping, nozzle, system_only=False):
     """One filament preset ref per model filament, picked from the AMS slot the
     user mapped it to. Returns fewer entries than ``required`` if a slot has no
     match at all (the caller treats that as "can't slice cleanly")."""
@@ -979,7 +994,7 @@ def _filament_presets(presets, idmap, required, ams, mapping, system_only=False)
         tray = next((a for a in ams if a["tray_id"] == mapping[i]), None) or {}
         real_name = idmap.get(tray.get("info_idx") or "") or ""
         fp = slicing.filament_preset(
-            presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
+            presets, config.PRINTER_MODEL, nozzle,
             tray.get("type") or "", tray.get("sub") or "", real_name,
             system_only=system_only,
         )
@@ -1003,15 +1018,17 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de
         except Exception:
             log.warning("filament-id-map fetch failed; falling back to heuristic", exc_info=True)
             idmap = {}
-        printer_p = slicing.printer_preset(presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER)
-        process_p = slicing.process_preset(presets, config.PRINTER_MODEL)
-        filament_ps = _filament_presets(presets, idmap, required, ams, mapping)
+        nozzle = await _nozzle()
+        printer_p = slicing.printer_preset(presets, config.PRINTER_MODEL, nozzle)
+        process_p = slicing.process_preset(presets, config.PRINTER_MODEL, nozzle)
+        filament_ps = _filament_presets(presets, idmap, required, ams, mapping, nozzle)
         if not (printer_p and process_p and len(filament_ps) == len(required)):
             log.warning("reslice: presets incomplete (printer=%s process=%s filament=%d/%d)",
                         bool(printer_p), bool(process_p), len(filament_ps), len(required))
             return None, i18n.t(lang, "reslice_presets_missing")
-        log.info("reslice lfid=%s plate=%s filaments=%s",
-                 library_file_id, plate, [p["id"] for p in filament_ps])
+        log.info("reslice lfid=%s plate=%s nozzle=%s process=%s filaments=%s",
+                 library_file_id, plate, nozzle, (process_p or {}).get("id"),
+                 [p["id"] for p in filament_ps])
         started = await bambuddy.slice_file(
             library_file_id, printer_p, process_p, filament_ps, plate=plate, bed_type=_bed_type())
         new_id = await _await_slice((started or {}).get("job_id"))
@@ -1020,7 +1037,8 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de
         # a broken one would otherwise take the whole job down, so on a miss retry
         # once with Bambu system presets before giving up on Bambuddy's slicer.
         if not new_id and any(not slicing.is_system(p) for p in filament_ps):
-            fallback = _filament_presets(presets, idmap, required, ams, mapping, system_only=True)
+            fallback = _filament_presets(presets, idmap, required, ams, mapping, nozzle,
+                                         system_only=True)
             if len(fallback) == len(required):
                 log.warning("reslice: personal presets failed, retrying with system presets %s",
                             [p["id"] for p in fallback])
@@ -1033,7 +1051,7 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de
         # Bambuddy's slice failed — typically a multi-plate 3mf whose objects sit
         # off-bed ("object conflicts"). Slice the plate straight on the real
         # slicer sidecar with bundled P1S profiles, which handles it.
-        side_id = await _reslice_via_sidecar(library_file_id, plate, ams, mapping)
+        side_id = await _reslice_via_sidecar(library_file_id, plate, ams, mapping, nozzle)
         if side_id:
             return side_id, i18n.t(lang, "reslice_note_sidecar", model=config.PRINTER_MODEL)
         return None, i18n.t(lang, "reslice_failed_both", model=config.PRINTER_MODEL)
@@ -1042,7 +1060,7 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de
         return None, i18n.t(lang, "reslice_exception")
 
 
-async def _reslice_via_sidecar(lfid, plate, ams, mapping):
+async def _reslice_via_sidecar(lfid, plate, ams, mapping, nozzle=None):
     """Slice plate ``plate`` of a 3mf directly on the slicer sidecar (bundled P1S
     printer + a filament profile matched to the mapped AMS slot) and upload the
     result to Bambuddy. Returns the new library_file_id, or None. Used when
@@ -1052,6 +1070,12 @@ async def _reslice_via_sidecar(lfid, plate, ams, mapping):
     slicer's default ('Textured PEI Plate'). Rare path (off-bed multi-plate only);
     to honour the plate here we'd patch curr_bed_type into the 3mf's
     project_settings before sending."""
+    # Only a 0.4 printer profile is bundled (profiles/printer_p1s_0.4.json), so on
+    # any other fitted nozzle this path would quietly produce 0.4 gcode. Decline
+    # instead — the caller reports "couldn't slice", which is the truth.
+    if nozzle and not _nozzle_eq(nozzle, slicer.PROFILE_NOZZLE):
+        log.warning("sidecar fallback skipped: no bundled profile for a %s nozzle", nozzle)
+        return None
     data = await bambuddy.download_file(lfid)
     if not data:
         return None

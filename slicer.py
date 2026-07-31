@@ -26,6 +26,10 @@ log = logging.getLogger("bambu-bot")
 
 _PROFILES = os.path.join(os.path.dirname(__file__), "profiles")
 PRINTER = os.path.join(_PROFILES, "printer_p1s_0.4.json")
+# The nozzle the bundled printer profile is for. Callers must check this against
+# the nozzle actually fitted — there is no profile for any other size, so this
+# path can only ever produce 0.4 gcode.
+PROFILE_NOZZLE = "0.4"
 _FILAMENTS = {
     "pla": os.path.join(_PROFILES, "filament_pla_basic.json"),
     "petg": os.path.join(_PROFILES, "filament_petg.json"),

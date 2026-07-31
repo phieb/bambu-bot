@@ -57,13 +57,41 @@ def printer_preset(presets, model, nozzle):
     return _ref(loose)
 
 
-def process_preset(presets, model):
-    """A process preset for the model; prefer a 0.20mm one."""
-    cands = [p for p in _all(presets, "process") if model in p["name"]]
-    if not cands:
-        return None
-    cands.sort(key=lambda p: ("0.20mm" not in p["name"], p["name"]))
-    return _ref(cands[0])
+# Bambu ships **no** P1S-named process presets — the P1S runs on the P1P family,
+# and only user-made presets ever carry 'P1S' in the name. So look for the model's
+# own name first (a personal preset the user tuned wins) and fall back to the
+# family Bambu actually publishes for it.
+_PROCESS_FAMILY = {"P1S": ("P1S", "P1P")}
+
+# The nozzle Bambu leaves implicit in preset names: '0.20mm Standard @BBL P1P' is
+# the 0.4 profile, every other size is spelled out ('… P1P 0.2 nozzle').
+_IMPLICIT_NOZZLE = "0.4"
+
+
+def _nozzle_ok(name, nozzle):
+    if f"{nozzle} nozzle" in name:
+        return True
+    return nozzle == _IMPLICIT_NOZZLE and "nozzle" not in name
+
+
+def process_preset(presets, model, nozzle=_IMPLICIT_NOZZLE):
+    """A process preset for the model **and the fitted nozzle**.
+
+    Layer height is bounded by nozzle diameter, so a 0.20mm profile is simply not
+    printable through a 0.2 nozzle — the process preset has to follow the physical
+    nozzle rather than a config default. Within the matching family prefer the
+    user's own presets (they carry the model name), then 'Standard', then
+    'Optimal', then the finest layer height, so each nozzle gets its sane default
+    (0.4 → 0.20mm Standard, 0.2 → 0.10mm Standard, 0.6 → 0.30mm Standard)."""
+    pool = [p for p in _all(presets, "process") if _nozzle_ok(p["name"], nozzle)]
+    for family in _PROCESS_FAMILY.get(model, (model,)):
+        cands = [p for p in pool if family in p["name"]]
+        if not cands:
+            continue
+        cands.sort(key=lambda p: ("Standard" not in p["name"], "Optimal" not in p["name"],
+                                  p["name"]))
+        return _ref(cands[0])
+    return None
 
 
 def filament_preset(presets, model, nozzle, tray_type, sub_brand, filament_name="",

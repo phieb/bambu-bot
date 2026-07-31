@@ -157,6 +157,74 @@ def test_reslice_retries_with_system_preset_when_personal_one_fails(monkeypatch)
     assert [f[0]["id"] for f in sent] == ["PFUSsunlu", "GFSA00_34"]
 
 
+NOZZLE_PRESETS = {"cloud": {
+    "printer": [
+        {"id": "GM014", "source": "cloud", "name": "Bambu Lab P1S 0.4 nozzle"},
+        {"id": "GM015", "source": "cloud", "name": "Bambu Lab P1S 0.2 nozzle"},
+    ],
+    "process": [
+        {"id": "PP04", "source": "cloud", "name": "0.20mm Standard @BBL P1P"},
+        {"id": "PP02", "source": "cloud", "name": "0.10mm Standard @BBL P1P 0.2 nozzle"},
+    ],
+    "filament": [
+        {"id": "PFUS04", "source": "cloud", "name": "SUNLU PLA Meta @Bambu Lab P1S 0.4 nozzle"},
+        {"id": "PFUS02", "source": "cloud", "name": "SUNLU PLA Meta @Bambu Lab P1S 0.2 nozzle"},
+    ],
+}, "standard": {}, "local": {}}
+
+
+def _slice_capture(monkeypatch, mounted):
+    """Wire a re-slice that records the presets it was asked to slice with."""
+    seen = {}
+
+    async def fake_slice(lfid, printer_p, process_p, filament_ps, plate=None, bed_type=None):
+        seen.update(printer=printer_p["id"], process=process_p["id"],
+                    filament=[f["id"] for f in filament_ps])
+        return {"job_id": 1}
+
+    async def fake_await(job_id, **kw):
+        return 42
+
+    async def fake_mounted(printer_id):
+        return mounted
+
+    _wire(monkeypatch, presets=NOZZLE_PRESETS)
+    monkeypatch.setattr(bambuddy, "mounted_nozzle", fake_mounted)
+    monkeypatch.setattr(bambuddy, "slice_file", fake_slice)
+    monkeypatch.setattr(handlers, "_await_slice", fake_await)
+    return seen
+
+
+def test_slice_follows_the_nozzle_the_printer_reports(monkeypatch):
+    """Printer, process and filament preset all key off nozzle diameter. Slicing
+    against config.NOZZLE_DIAMETER instead of the fitted nozzle produced gcode the
+    machine can't print — and the queue gate then rejected the bot's own output."""
+    seen = _slice_capture(monkeypatch, "0.2")
+    monkeypatch.setattr(config, "NOZZLE_DIAMETER", "0.4")  # config must lose to reality
+    asyncio.run(handlers._reslice(
+        7, [{"index": 0, "type": "PLA", "color": "79B78B"}], colors.ams_snapshot(STATUS), [1]))
+    assert seen == {"printer": "GM015", "process": "PP02", "filament": ["PFUS02"]}
+
+
+def test_slice_falls_back_to_config_when_the_nozzle_is_unreadable(monkeypatch):
+    seen = _slice_capture(monkeypatch, None)
+    monkeypatch.setattr(config, "NOZZLE_DIAMETER", "0.4")
+    asyncio.run(handlers._reslice(
+        7, [{"index": 0, "type": "PLA", "color": "79B78B"}], colors.ams_snapshot(STATUS), [1]))
+    assert seen == {"printer": "GM014", "process": "PP04", "filament": ["PFUS04"]}
+
+
+def test_sidecar_fallback_declines_a_nozzle_it_has_no_profile_for(monkeypatch):
+    """Only profiles/printer_p1s_0.4.json is bundled, so any other nozzle would
+    silently come back as 0.4 gcode."""
+    called = []
+    monkeypatch.setattr(handlers.slicer, "PROFILE_NOZZLE", "0.4")
+    monkeypatch.setattr(bambuddy, "download_file",
+                        lambda *a, **k: called.append(a) or None)
+    assert asyncio.run(handlers._reslice_via_sidecar(1, 1, [], [0], nozzle="0.2")) is None
+    assert not called  # declined before even fetching the file
+
+
 def test_go_hint_only_when_plate_clear_is_required(monkeypatch):
     async def required():
         return {"require_plate_clear": True}

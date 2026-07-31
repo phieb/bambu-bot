@@ -14,6 +14,12 @@ PRESETS = {
             {"id": "PR1", "source": "cloud", "name": "0.20mm Meta PLA fast @BBL P1S"},
             {"id": "PR2", "source": "cloud", "name": "P1S eSUN PETG Process"},
             {"id": "PRX", "source": "cloud", "name": "0.20mm Standard @BBL X1C"},
+            # Bambu's own P1S process profiles are published under the P1P family,
+            # with every non-0.4 nozzle spelled out in the name.
+            {"id": "PP04", "source": "cloud", "name": "0.20mm Standard @BBL P1P"},
+            {"id": "PP02", "source": "cloud", "name": "0.10mm Standard @BBL P1P 0.2 nozzle"},
+            {"id": "PP02f", "source": "cloud", "name": "0.06mm Fine @BBL P1P 0.2 nozzle"},
+            {"id": "PP06", "source": "cloud", "name": "0.30mm Standard @BBL P1P 0.6 nozzle"},
         ],
         "filament": [
             {"id": "GFSA00_34", "source": "cloud", "name": "Bambu PLA Basic @BBL P1S 0.4 nozzle"},
@@ -34,8 +40,21 @@ def test_printer_preset_exact():
     assert slicing.printer_preset(PRESETS, "P1S", "0.4") == {"source": "cloud", "id": "GM014"}
 
 
-def test_process_preset_prefers_020_for_model():
-    assert slicing.process_preset(PRESETS, "P1S") == {"source": "cloud", "id": "PR1"}
+def test_process_preset_prefers_the_users_own_p1s_preset():
+    # A personal preset carries the model name; Bambu's system ones say P1P.
+    assert slicing.process_preset(PRESETS, "P1S", "0.4") == {"source": "cloud", "id": "PR1"}
+
+
+def test_process_preset_follows_the_fitted_nozzle():
+    # Layer height is bounded by nozzle diameter, so the 0.4 profiles (named
+    # without a nozzle suffix) must not be handed to a 0.2 nozzle. Bambu ships no
+    # P1S-named process presets at all, so 0.2 falls through to the P1P family.
+    assert slicing.process_preset(PRESETS, "P1S", "0.2") == {"source": "cloud", "id": "PP02"}
+    assert slicing.process_preset(PRESETS, "P1S", "0.6") == {"source": "cloud", "id": "PP06"}
+
+
+def test_process_preset_none_when_the_nozzle_has_no_profile():
+    assert slicing.process_preset(PRESETS, "P1S", "0.8") is None
 
 
 def test_filament_generic_pla():
