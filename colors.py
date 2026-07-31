@@ -23,6 +23,13 @@ _PALETTE = [
     {"hex": "0A5A0A", "de": "Dunkelgrün", "en": "Dark Green"},
     {"hex": "10B0A0", "de": "Türkis",     "en": "Teal"},
     {"hex": "60B0E0", "de": "Hellblau",   "en": "Light Blue"},
+    # Pastel anchors. Without them every washed-out tone collapsed onto the
+    # neutrals — a pastel green landed on Grau (808080) and a pastel yellow on
+    # Beige (D8C8A8), because desaturated colours are nearer the grey axis than
+    # they are to a saturated anchor of their own hue.
+    {"hex": "8CC98C", "de": "Hellgrün",   "en": "Light Green"},
+    {"hex": "F8E9A0", "de": "Hellgelb",   "en": "Light Yellow"},
+    {"hex": "8FD2DC", "de": "Pastellblau", "en": "Pastel Blue"},
     {"hex": "1050C0", "de": "Blau",       "en": "Blue"},
     {"hex": "0A1A6A", "de": "Dunkelblau", "en": "Dark Blue"},
     {"hex": "8030C0", "de": "Lila",       "en": "Purple"},
@@ -61,6 +68,25 @@ def color_name(hex6, lang="de"):
         if bestd is None or d < bestd:
             best, bestd = entry[key], d
     return best
+
+
+def slot_label(a, lang="de"):
+    """One AMS slot as a human line.
+
+    Prefers the **Spoolman spool** the user assigned to that slot in Bambuddy
+    (``spool``/``vendor``/``material``, filled in by ``handlers._describe_slots``).
+    The AMS itself reports only a hex plus a generic type ('PLA'), and naming a
+    pastel by nearest palette anchor is genuinely misleading — 'Meta Apple Green'
+    came out as 'Grau', 'Meta Lemon Yellow' as 'Beige'. The assigned spool carries
+    the real product name, so use it whenever there is one and keep the hex guess
+    only as the fallback for unassigned slots."""
+    spool = a.get("spool") or ""
+    if spool:
+        head = " ".join(x for x in (a.get("vendor") or "", spool) if x)
+        mat = a.get("material") or a.get("type") or ""
+        return f"{head} ({mat})" if mat else head
+    return (f"{a.get('type') or ''} {color_name(a.get('color'), lang)}".strip()
+            + (f" {a['sub']}" if a.get("sub") else ""))
 
 
 def _choose_index(resolved):
@@ -326,9 +352,12 @@ def build_question(name, required, ams, lang="de"):
         f"{color_word} {c['index'] + 1}: {c['type']} {color_name(c['color'], lang)}".rstrip()
         for c in required
     )
+    # The ⚙️ line names the *slicer* filament profile this slot will be sliced
+    # with — SUNLU Meta and Bambu PLA need different flow/temperature, so seeing
+    # it before answering is what makes a wrong AMS setup catchable.
     ams_lines = "\n".join(
-        f"  {a['slot']}) {a['type']} {color_name(a['color'], lang)}".rstrip()
-        + (f" {a['sub']}" if a["sub"] else "")
+        f"  {a['slot']}) {slot_label(a, lang)}"
+        + (f"\n      ⚙️ {a['preset']}" if a.get("preset") else "")
         for a in ams
     )
     maxslot = len(ams) or 1

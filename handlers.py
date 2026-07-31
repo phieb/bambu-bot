@@ -372,7 +372,7 @@ async def _process_model_bytes(group_id, sender, content, name, kind):
             queued, note = await _queue_guarded(group_id, sender, name, lfid, [], plate_id=plate_id)
             await signal_client.send_to_group(
                 group_id,
-                i18n.t(lang, "queued_presliced", name=name)
+                i18n.t(lang, "queued_presliced", name=name) + await _go_hint(lang)
                 if queued else i18n.t(lang, "label_note", name=name, note=note),
             )
         else:
@@ -445,6 +445,59 @@ async def _send_plate_question(group_id, lfid, name, plates):
     await signal_client.send_to_group(group_id, text, attachments=attachments or None)
 
 
+async def _describe_slots(ams):
+    """Annotate an AMS snapshot in place with what each slot *really* holds:
+
+    * ``spool``/``vendor``/``material`` — the Spoolman spool the user assigned to
+      that tray in Bambuddy. The AMS reports only a hex and a bare type, and
+      naming a pastel by nearest palette anchor misleads (a SUNLU 'Meta Apple
+      Green' reads as 'Grau'); the assigned spool has the real product name.
+    * ``preset`` — the slicer filament profile this slot would be sliced with, so
+      a wrong AMS/Bambuddy setup is visible *before* answering rather than after
+      the print comes out at the wrong flow and temperature.
+
+    Best-effort throughout: any lookup that fails just leaves the fields off and
+    the question falls back to the hex guess."""
+    try:
+        assigns, spools, presets, idmap = await asyncio.gather(
+            bambuddy.slot_assignments(), bambuddy.spoolman_spools(),
+            bambuddy.get_presets(), bambuddy.filament_id_map(),
+            return_exceptions=True,
+        )
+    except Exception:
+        log.warning("slot description failed", exc_info=True)
+        return ams
+    by_id = {}
+    if not isinstance(spools, Exception):
+        by_id = {s.get("id"): s for s in ((spools or {}).get("spools") or [])}
+    by_tray = {}
+    if not isinstance(assigns, Exception):
+        for a in assigns or []:
+            # Only this printer's first AMS unit — the snapshot is that unit's trays.
+            if a.get("printer_id") != config.PRINTER_ID or (a.get("ams_id") or 0) != 0:
+                continue
+            by_tray[a.get("tray_id")] = (by_id.get(a.get("spoolman_spool_id")) or {}).get("filament") or {}
+    for slot in ams:
+        f = by_tray.get(slot["tray_id"]) or {}
+        if f.get("name"):
+            slot["spool"] = f["name"]
+            slot["vendor"] = (f.get("vendor") or {}).get("name") or ""
+            slot["material"] = f.get("material") or ""
+        if isinstance(presets, Exception):
+            continue
+        real_name = ({} if isinstance(idmap, Exception) else (idmap or {})).get(slot.get("info_idx") or "") or ""
+        fp = slicing.filament_preset(
+            presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
+            slot.get("type") or "", slot.get("sub") or "", real_name,
+        )
+        if fp:
+            # Drop the "@Bambu Lab P1S 0.4 nozzle" tail — it is identical on every
+            # slot (we only ever match this printer/nozzle), so all four lines
+            # would end the same way and the part that differs gets buried.
+            slot["preset"] = slicing.preset_name(presets, "filament", fp["id"]).split(" @")[0]
+    return ams
+
+
 async def _ask_colors(group_id, job_id, lfid, label, plate):
     """Set the dialog to await colors for one plate and send the color question
     (plate thumbnail + swatch). ``label`` is the display title (incl. plate name
@@ -456,7 +509,7 @@ async def _ask_colors(group_id, job_id, lfid, label, plate):
         # colours would dead-end parse_reply and leave re-slice without a preset.)
         required = [{"index": 0, "type": "", "color": "", "name": ""}]
     status = await bambuddy.printer_status(config.PRINTER_ID)
-    ams = colors.ams_snapshot(status)
+    ams = await _describe_slots(colors.ams_snapshot(status))
     store.update_dialog(
         job_id, stage="awaiting_colors",
         plate_index=plate.get("index"), plate_name=plate.get("name") or "",
@@ -845,6 +898,22 @@ async def _plate(group_id, cmd):
         group_id, i18n.t(lang, "plate_status", current=current, options=options))
 
 
+async def _go_hint(lang):
+    """Trailing "…but it needs your !go first" line, or "" when it doesn't.
+
+    "In der Queue, ich sag Bescheid wenn er fertig ist" reads as *it is printing
+    now*, but with Bambuddy's ``require_plate_clear`` on, a queued job sits there
+    until the plate is confirmed clear. Only say it when that setting is actually
+    on — with auto-eject running it is off and the queue flows by itself, so the
+    hint would be a lie in the other direction."""
+    try:
+        settings = await bambuddy.get_settings()
+    except Exception:
+        log.warning("could not read require_plate_clear for the !go hint", exc_info=True)
+        return ""
+    return i18n.t(lang, "go_hint") if (settings or {}).get("require_plate_clear") else ""
+
+
 async def _slice_all(group_id, job, decisions, plates):
     """Slice + queue every collected plate decision in order, then report once.
     Per-plate errors are isolated so one bad plate doesn't lose the others."""
@@ -895,10 +964,28 @@ async def _slice_all(group_id, job, decisions, plates):
     store.delete_job(job["id"])
     if queued_n:
         head = i18n.t(lang, "slice_tail_head_multi") if queued_n > 1 else ""
-        tail = i18n.t(lang, "slice_tail_queued", head=head)
+        tail = i18n.t(lang, "slice_tail_queued", head=head) + await _go_hint(lang)
     else:
         tail = i18n.t(lang, "slice_tail_none")
     await signal_client.send_to_group(group_id, "\n".join(lines) + tail)
+
+
+def _filament_presets(presets, idmap, required, ams, mapping, system_only=False):
+    """One filament preset ref per model filament, picked from the AMS slot the
+    user mapped it to. Returns fewer entries than ``required`` if a slot has no
+    match at all (the caller treats that as "can't slice cleanly")."""
+    out = []
+    for i in range(len(required)):
+        tray = next((a for a in ams if a["tray_id"] == mapping[i]), None) or {}
+        real_name = idmap.get(tray.get("info_idx") or "") or ""
+        fp = slicing.filament_preset(
+            presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
+            tray.get("type") or "", tray.get("sub") or "", real_name,
+            system_only=system_only,
+        )
+        if fp:
+            out.append(fp)
+    return out
 
 
 async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de"):
@@ -918,23 +1005,29 @@ async def _reslice(library_file_id, required, ams, mapping, plate=None, lang="de
             idmap = {}
         printer_p = slicing.printer_preset(presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER)
         process_p = slicing.process_preset(presets, config.PRINTER_MODEL)
-        filament_ps = []
-        for i in range(len(required)):
-            tray = next((a for a in ams if a["tray_id"] == mapping[i]), None) or {}
-            real_name = idmap.get(tray.get("info_idx") or "") or ""
-            fp = slicing.filament_preset(
-                presets, config.PRINTER_MODEL, config.NOZZLE_DIAMETER,
-                tray.get("type") or "", tray.get("sub") or "", real_name,
-            )
-            if fp:
-                filament_ps.append(fp)
+        filament_ps = _filament_presets(presets, idmap, required, ams, mapping)
         if not (printer_p and process_p and len(filament_ps) == len(required)):
             log.warning("reslice: presets incomplete (printer=%s process=%s filament=%d/%d)",
                         bool(printer_p), bool(process_p), len(filament_ps), len(required))
             return None, i18n.t(lang, "reslice_presets_missing")
+        log.info("reslice lfid=%s plate=%s filaments=%s",
+                 library_file_id, plate, [p["id"] for p in filament_ps])
         started = await bambuddy.slice_file(
             library_file_id, printer_p, process_p, filament_ps, plate=plate, bed_type=_bed_type())
         new_id = await _await_slice((started or {}).get("job_id"))
+        # A personal preset (PFUS…, e.g. 'SUNLU PLA Meta') is the *right* one — it
+        # carries that spool's flow ratio and temperatures. They do slice fine, but
+        # a broken one would otherwise take the whole job down, so on a miss retry
+        # once with Bambu system presets before giving up on Bambuddy's slicer.
+        if not new_id and any(not slicing.is_system(p) for p in filament_ps):
+            fallback = _filament_presets(presets, idmap, required, ams, mapping, system_only=True)
+            if len(fallback) == len(required):
+                log.warning("reslice: personal presets failed, retrying with system presets %s",
+                            [p["id"] for p in fallback])
+                started = await bambuddy.slice_file(
+                    library_file_id, printer_p, process_p, fallback,
+                    plate=plate, bed_type=_bed_type())
+                new_id = await _await_slice((started or {}).get("job_id"))
         if new_id:
             return new_id, i18n.t(lang, "reslice_note_bambu", model=config.PRINTER_MODEL)
         # Bambuddy's slice failed — typically a multi-plate 3mf whose objects sit

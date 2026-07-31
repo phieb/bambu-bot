@@ -242,6 +242,25 @@ async def download_file(library_file_id):
         return None
 
 
+async def get_settings():
+    """Bambuddy's global settings (``require_plate_clear``, ``default_printer_id``,
+    Spoolman wiring, …)."""
+    return await _get("/api/v1/settings")
+
+
+async def slot_assignments():
+    """[{printer_id, ams_id, tray_id, spoolman_spool_id}] — which Spoolman spool the
+    user has assigned to each AMS slot in Bambuddy. Empty when Spoolman is off."""
+    return await _get("/api/v1/spoolman/inventory/slot-assignments/all")
+
+
+async def spoolman_spools():
+    """{"spools": [{id, filament:{name, material, color_hex, vendor:{name}}}]} —
+    the Spoolman inventory as Bambuddy proxies it. Paired with
+    :func:`slot_assignments` this turns an AMS tray into its real product name."""
+    return await _get("/api/v1/spoolman/spools")
+
+
 async def set_require_plate_clear(value):
     """Toggle Bambuddy's global 'wait for manual plate-clear between jobs' setting.
     Off while auto-eject is active so the queue flows without manual !go."""

@@ -104,6 +104,12 @@ _M = {
         "de": '✅ „{name}" ist in der Queue (vorgeslict)! Ich sag Bescheid, wenn er fertig ist.',
         "en": '✅ „{name}" is in the queue (pre-sliced)! I\'ll let you know when it\'s done.',
     },
+    "go_hint": {
+        "de": "\n⏸️ Er startet erst, wenn die Platte frei ist — schick **!go**, "
+              "sobald das Bett leer ist (gilt auch zwischen zwei Drucken).",
+        "en": "\n⏸️ It only starts once the plate is clear — send **!go** as soon as "
+              "the bed is empty (also between two prints).",
+    },
     "label_note": {
         "de": '„{name}": {note}',
         "en": '„{name}": {note}',

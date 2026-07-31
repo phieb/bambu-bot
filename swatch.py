@@ -139,8 +139,9 @@ def build(name, required, ams, lang="de"):
         section(
             "AMS slots:" if en else "AMS Slots:",
             ams,
-            lambda a, n: (f"{a['slot']})  {a['type']} {n}".rstrip()
-                          + (f"  {a['sub']}" if a.get("sub") else "")),
+            # Same label as the message text (real spool name when assigned), so
+            # picture and text can't disagree about what sits in a slot.
+            lambda a, n: f"{a['slot']})  {colors.slot_label(a, lang)}",
         )
 
         buf = io.BytesIO()

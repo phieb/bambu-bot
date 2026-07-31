@@ -25,12 +25,24 @@ def _ref(p):
     return {"source": p["source"], "id": p["id"]} if p else None
 
 
-def _sliceable(p):
-    """Personal/custom filament presets (id ``PFUS…``, synced from non-Bambu
-    spools like SUNLU/eSUN) make the slicer sidecar fail with "input preset file
-    is invalid and can not be parsed" — only Bambu *system* presets (``GF…``)
-    are parseable, so we skip the custom ones and fall back to a Bambu preset of
-    the same type."""
+def preset_name(presets, kind, preset_id):
+    """Display name of a preset id, or "" — the ref we pass to the slicer carries
+    only source+id, but the *name* is what makes a slot line readable."""
+    return next((p["name"] for p in _all(presets, kind) if p["id"] == preset_id), "")
+
+
+def is_system(p):
+    """True for a Bambu *system* preset (``GF…``) as opposed to a personal one
+    (``PFUS…``, synced from the user's own spools like SUNLU Meta or eSUN).
+
+    Personal presets used to be filtered out entirely: they once made the slicer
+    fail with "input preset file is invalid and can not be parsed". That is no
+    longer true (verified 2026-07-31 against library file 144 — a slice with
+    ``PFUS513d393118294f`` "SUNLU PLA Meta @Bambu Lab P1S 0.4 nozzle" completed and
+    produced ``filament_vendor = SUNLU``, flow 0.931, 210 °C instead of Bambu PLA
+    Basic's 0.98/220 °C). Blanket-skipping them meant every SUNLU spool was
+    silently sliced as generic Bambu PLA, so they are used first now and this
+    predicate only marks the *retry* pool for when a personal preset still fails."""
     return not (p.get("id") or "").upper().startswith("PFUS")
 
 
@@ -54,13 +66,18 @@ def process_preset(presets, model):
     return _ref(cands[0])
 
 
-def filament_preset(presets, model, nozzle, tray_type, sub_brand, filament_name=""):
+def filament_preset(presets, model, nozzle, tray_type, sub_brand, filament_name="",
+                    system_only=False):
     """Best filament preset for an AMS slot, matched by name against the target
     printer. ``filament_name`` (resolved from the AMS tag via filament-id-map,
-    e.g. 'eSUN PETG Basic') is the strongest signal — it pins the *actual* spool,
-    including non-Bambu ones. Falls back to sub-brand, then generic Bambu."""
+    e.g. 'SUNLU PLA Meta') is the strongest signal — it pins the *actual* spool,
+    including non-Bambu ones. Falls back to sub-brand, then generic Bambu.
+    ``system_only`` restricts the pool to Bambu system presets: the safe retry
+    after a slice failed with the user's personal preset (see :func:`is_system`)."""
     noz = f"{nozzle} nozzle"
-    pool = [p for p in _all(presets, "filament") if _sliceable(p)]
+    pool = _all(presets, "filament")
+    if system_only:
+        pool = [p for p in pool if is_system(p)]
     cands = [p for p in pool
              if model in p["name"] and noz in p["name"] and tray_type and tray_type in p["name"]]
     if not cands:  # last resort: ignore type, just the right printer/nozzle
