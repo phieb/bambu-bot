@@ -139,3 +139,14 @@ def test_failure_message_falls_back_to_the_hms_reason(tmp_path, monkeypatch):
     asyncio.run(handlers._check_completions())
     assert "fehlgeschlagen" in sent[0]
     assert "AMS A Slot 1 Filament ist aufgebraucht" in sent[0]
+
+
+def test_p1s_specific_codes_are_bundled():
+    """The catalogue is scoped by serial prefix (?d=01P). Those four codes exist
+    only in the P1S list — if a refresh ever drops the device fetch, they vanish
+    and the part-cooling-fan fault reads as 'unknown' on the one printer that
+    can report it."""
+    for lang in i18n.LANGS:
+        table = hms._table(lang)
+        assert "0300310000010001" in table["hms"]      # part cooling fan stalled
+        assert "0500C011" in table["err"]              # SD card degraded

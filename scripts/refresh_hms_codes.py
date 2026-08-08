@@ -7,6 +7,17 @@ Studio queries. We bundle it instead of calling out at runtime: the bot must be
 able to explain an error while the internet is down, and the payload barely
 compresses to 60 kB per language.
 
+``?d=<serial prefix>`` scopes the catalogue to one machine — ``01P`` is the P1S
+(our serial is ``01P00C571300842``; Bambuddy keys its action table off the same
+three characters). Verified 2026-08-08: scoping only *filters* the code set, it
+never changes the wording — of the ~3900 codes both lists share, **zero** differ
+in text. The P1S list drops 35 codes for hardware it doesn't have and adds 4 it
+alone knows (part-cooling fan ``0300-3100-…``, the Ethernet accessory, an SD-card
+warning). So we fetch both and **merge**: the device list contributes its
+exclusive codes, the generic one keeps an explanation available for anything an
+odd firmware might emit. A wrong-but-plausible sentence isn't a risk here — the
+texts are identical where they overlap.
+
 Run it when codes look unknown (new firmware adds some):
 
     ./.venv/bin/python scripts/refresh_hms_codes.py
@@ -21,22 +32,40 @@ import urllib.request
 
 URL = "https://e.bambulab.com/query.php?lang={lang}"
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hms_data")
+# Serial prefix of the machine we print on. Other known values: 00M/00W = X1
+# series, 03W/039 = H2D family. An unknown one answers `result: 201`.
+DEVICE = "01P"
 
 
-def fetch(lang):
+def _get(url):
     # The endpoint 403s a bare urllib request — it wants a browser-ish UA.
-    req = urllib.request.Request(URL.format(lang=lang),
-                                 headers={"User-Agent": "Mozilla/5.0 (bambu-bot hms refresh)"})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (bambu-bot hms refresh)"})
     with urllib.request.urlopen(req, timeout=60) as r:
         payload = json.load(r)
-    data = payload["data"]
+    # `result: 0` is success; anything else comes with an empty string as data
+    # (e.g. 201 for a device id Bambu doesn't publish a catalogue for).
+    if payload.get("result") != 0 or not isinstance(payload.get("data"), dict):
+        raise RuntimeError(f"{url} → result {payload.get('result')}, no catalogue")
+    return payload["data"]
+
+
+def _codes(data, key, lang):
+    """{ECODE: text} from one catalogue section (list of {ecode, intro})."""
+    return {e["ecode"].upper(): e["intro"].strip()
+            for e in data.get(key, {}).get(lang, [])
+            if e.get("ecode") and e.get("intro")}
+
+
+def fetch(lang, device=DEVICE):
+    generic = _get(URL.format(lang=lang))
+    scoped = _get(URL.format(lang=lang) + f"&d={device}")
     # device_hms = the 16-hex HMS codes, device_error = the 8-hex print_error
-    # codes. Both are lists of {ecode, intro}; we only need the mapping.
-    hms = {e["ecode"].upper(): e["intro"].strip()
-           for e in data["device_hms"][lang] if e.get("ecode") and e.get("intro")}
-    err = {e["ecode"].upper(): e["intro"].strip()
-           for e in data["device_error"][lang] if e.get("ecode") and e.get("intro")}
-    return {"lang": lang, "ver": data["device_hms"].get("ver"), "hms": hms, "err": err}
+    # codes. Device entries last so they win on any future disagreement.
+    hms = {**_codes(generic, "device_hms", lang), **_codes(scoped, "device_hms", lang)}
+    err = {**_codes(generic, "device_error", lang), **_codes(scoped, "device_error", lang)}
+    return {"lang": lang, "device": device,
+            "ver": scoped.get("device_hms", {}).get("ver"), "hms": hms, "err": err}
 
 
 def main(langs=("de", "en")):

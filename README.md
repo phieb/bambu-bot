@@ -158,6 +158,13 @@ and an unlisted code still goes out as a number, which is what the Bambu wiki an
 support ask for. Refresh the catalogue after a firmware update with
 `./.venv/bin/python scripts/refresh_hms_codes.py` and commit the result.
 
+The catalogue can be **scoped to one machine** by serial prefix (`?d=01P` is the
+P1S). That only filters the code set — of the ~3900 codes the scoped and the
+generic list share, none differ in wording. The refresh script fetches both and
+merges them, so the four codes only the P1S knows (part-cooling fan, Ethernet
+accessory, SD-card wear) are present without losing an explanation for anything
+else a firmware might emit.
+
 ## Localization
 
 Replies are available in **German (default)** and **English**, chosen **per
