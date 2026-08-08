@@ -141,6 +141,23 @@ message when it recovers. There are deliberately no repeat reminders. Note that 
 *low filament* warning is not possible: every AMS tray reports `remain: -1` for
 third-party spools, so detection is reactive only.
 
+**Error codes are explained, not just relayed.** Bambuddy hands over the number
+only (its `hms_errors` entries carry no description), so an alert used to read
+`⚠️ Fehler: 0x4003`. `hms.py` resolves the code against Bambu's official
+catalogue — bundled offline under `hms_data/`, both languages — and the alert,
+`!progress` and the failure notice now say what is actually wrong:
+
+```
+⚠️ 0700-2000-0002-0001 — AMS A Slot 1 Filament ist aufgebraucht. Bitte legen Sie
+   ein neues Filament ein.
+```
+
+Severity picks the marker (🛑 fatal · ⚠️ warning · ℹ️ info). Both code namespaces
+the printer uses are covered — 16-char HMS codes and 8-char `print_error` codes —
+and an unlisted code still goes out as a number, which is what the Bambu wiki and
+support ask for. Refresh the catalogue after a firmware update with
+`./.venv/bin/python scripts/refresh_hms_codes.py` and commit the result.
+
 ## Localization
 
 Replies are available in **German (default)** and **English**, chosen **per

@@ -19,6 +19,7 @@ import bambuddy
 import classify
 import colors
 import config
+import hms
 import i18n
 import signal_client
 import slicing
@@ -1525,15 +1526,15 @@ async def _progress(group_id):
     rem = s.get("remaining_time")
     active = state.upper() in _ACTIVE_STATES or (isinstance(prog, (int, float)) and 0 < prog < 100)
     paused = state.upper() in _PAUSED_STATES
-    hms = _hms_detail(s, lang)
+    hms_detail = _hms_detail(s, lang)     # not `hms` — that's the module
     if not (name and active):
         text = i18n.t(lang, "progress_idle", state=state.lower())
         # Nothing printing *and* the plate isn't confirmed clear → say why the
         # queue is stalled, so checking in an hour actually explains itself.
         if s.get("awaiting_plate_clear"):
             text += "\n" + i18n.t(lang, "progress_awaiting_clear")
-        if hms:
-            text += "\n" + i18n.t(lang, "progress_hms", detail=hms)
+        if hms_detail:
+            text += "\n" + i18n.t(lang, "progress_hms", detail=hms_detail)
         await signal_client.send_to_group(group_id, text, attachments=attachments)
         return
     parts = [f'{"⏸️" if paused else "🖨️"} „{name}" — {state}']
@@ -1552,9 +1553,12 @@ async def _progress(group_id):
         clock = (datetime.datetime.now() + datetime.timedelta(minutes=r)).strftime("%H:%M")
         parts.append(i18n.t(lang, "progress_remaining", dur=dur))
         parts.append(i18n.t(lang, "progress_done_at", clock=clock))
-    if hms:
-        parts.append(i18n.t(lang, "progress_hms", detail=hms))
-    await signal_client.send_to_group(group_id, " · ".join(parts), attachments=attachments)
+    # The error goes on its own line, not into the " · " status strip: an
+    # explained code is a full sentence and would make that strip unreadable.
+    text = " · ".join(parts)
+    if hms_detail:
+        text += "\n" + i18n.t(lang, "progress_hms", detail=hms_detail)
+    await signal_client.send_to_group(group_id, text, attachments=attachments)
 
 
 async def _go(group_id):
@@ -1583,40 +1587,10 @@ async def poll_completions(interval=60):
 
 # ----- intervention alerts: the printer is stopped and needs a human -----
 
-def _hms_entry(e):
-    """(code, description) from one hms_errors entry. Bambuddy returns a list, but
-    the element shape isn't contractually pinned — accept dicts or bare strings,
-    and never raise: an exception in the poller kills that whole cycle for *every*
-    tracker, not just this one."""
-    if isinstance(e, dict):
-        code = (e.get("code") or e.get("hms_code") or e.get("attr") or "")
-        desc = (e.get("description") or e.get("desc") or e.get("message") or "")
-        return str(code).strip(), str(desc).strip()
-    return str(e).strip(), ""
-
-
-def _hms_codes(pstatus):
-    """Sorted HMS error codes as strings, or [] when the printer is healthy."""
-    try:
-        entries = (pstatus or {}).get("hms_errors") or []
-        codes = [c for c, _ in (_hms_entry(e) for e in entries) if c]
-        return sorted(set(codes))
-    except Exception:
-        log.warning("could not read hms_errors", exc_info=True)
-        return []
-
-
-def _hms_detail(pstatus, lang="de"):
-    """': 0500-4003 Filament ausgegangen' — code + text, max 3, or '' if healthy."""
-    try:
-        entries = (pstatus or {}).get("hms_errors") or []
-    except Exception:
-        return ""
-    bits = []
-    for e in entries[:3]:
-        code, desc = _hms_entry(e)
-        bits.append(f"{code} {desc}".strip() or i18n.t(lang, "hms_unknown"))
-    return (": " + "; ".join(bits)) if bits else ""
+# Reading and explaining the printer's error codes lives in hms.py — Bambuddy
+# ships the number only, the sentence comes from Bambu's bundled catalogue.
+_hms_codes = hms.codes
+_hms_detail = hms.detail
 
 
 def _condition(pstatus):
@@ -1626,7 +1600,7 @@ def _condition(pstatus):
     codes = _hms_codes(pstatus)
     if codes:
         return "hms:" + ",".join(codes)
-    if (pstatus or {}).get("hms_errors"):
+    if hms.entries(pstatus):
         return "hms:unknown"          # errors present but unparseable — still alert
     if ((pstatus or {}).get("state") or "").upper() in _PAUSED_STATES:
         return "pause"
@@ -1726,7 +1700,10 @@ async def _check_completions():
             )
             store.set_stage(job["id"], "done")
         elif status == "failed":
-            detail = (f": {item.get('error_message')}" if item.get("error_message") else ".")
+            # Bambuddy rarely fills error_message; the *why* usually sits in the
+            # printer's HMS codes, which are still standing at that moment.
+            detail = (f": {item.get('error_message')}" if item.get("error_message")
+                      else _hms_detail(pstatus, lang) or ".")
             await signal_client.send_to_group(
                 job["group_id"],
                 i18n.t(lang, "completion_failed", name=job["model_name"], detail=detail),
