@@ -448,8 +448,10 @@ _M = {
         "en": "⏸️ paused — waiting for you",
     },
     "progress_hms": {
-        "de": "⚠️ Fehler{detail}",
-        "en": "⚠️ error{detail}",
+        # {detail} already starts with ':' and carries a severity emoji per
+        # line (see hms.detail) — no second warning sign here.
+        "de": "Der Drucker meldet{detail}",
+        "en": "The printer reports{detail}",
     },
     "progress_awaiting_clear": {
         "de": "🧹 Die Platte ist noch voll — schick !go, wenn sie frei ist.",
@@ -472,8 +474,14 @@ _M = {
         "en": "▶️ „{name}\" is running again.",
     },
     "hms_unknown": {
-        "de": "unbekannter Fehler",
-        "en": "unknown error",
+        # Shown when Bambu's catalogue doesn't list the code (new firmware).
+        # The number still goes out — it's what the wiki and support ask for.
+        "de": "unbekannter Fehlercode (in der Bambu-Wiki nachschlagen)",
+        "en": "unknown error code (look it up in the Bambu wiki)",
+    },
+    "hms_more": {
+        "de": "… und {n} weitere Meldung(en)",
+        "en": "… and {n} more message(s)",
     },
 
     # ----- !go -----

@@ -131,6 +131,18 @@ def test_hms_alerts_once_and_a_new_code_alerts_again(tmp_path, monkeypatch):
     assert len(sent) == 2 and "0300-0100" in sent[1][1]
 
 
+def test_alert_explains_a_real_bambuddy_error(tmp_path, monkeypatch):
+    """Bambuddy sends no description — the alert must still say what happened."""
+    printer = {"state": "PAUSE", "hms_errors": [
+        {"code": "0x20001", "attr": 0x07002000, "module": 7, "severity": 2,
+         "actions": [], "job_id": None, "full_code": "0700200000020001"}]}
+    sent = _setup(tmp_path, monkeypatch, {"status": "printing"}, printer)
+    _poll(3)
+    assert len(sent) == 1
+    assert "AMS A Slot 1 Filament ist aufgebraucht" in sent[0][1]
+    assert "0700-2000-0002-0001" in sent[0][1]
+
+
 def test_hms_wins_over_pause(tmp_path, monkeypatch):
     """A pause caused by an error should read as the error, not a bare pause."""
     printer = {"state": "PAUSE", "hms_errors": [{"code": "0500-4003", "description": "x"}]}
@@ -229,6 +241,20 @@ def test_progress_reports_hms(tmp_path, monkeypatch):
         "hms_errors": [{"code": "0500-4003", "description": "Filament ausgegangen"}]})
     asyncio.run(handlers._progress("group.x"))
     assert "0500-4003" in sent[-1]
+
+
+def test_progress_explains_a_real_bambuddy_error(tmp_path, monkeypatch):
+    config.DB_PATH = str(tmp_path / "t.db")
+    store.init_db()
+    sent = _progress_setup(monkeypatch, {
+        "state": "PAUSE", "current_print": "Box1", "progress": 42,
+        "hms_errors": [{"code": "0x20001", "attr": 0x07002000, "severity": 2,
+                        "full_code": "0700200000020001"}]})
+    asyncio.run(handlers._progress("group.x"))
+    out = sent[-1]
+    assert "AMS A Slot 1 Filament ist aufgebraucht" in out
+    # the explanation is a sentence — it must not be crammed into the " · " strip
+    assert "\n" in out and " · AMS" not in out
 
 
 def test_progress_idle_explains_awaiting_plate_clear(tmp_path, monkeypatch):
